@@ -1,16 +1,24 @@
-# Lightweight Vercel function entrypoint that exposes the Flask app from the repository
-# Vercel expects a top-level `app`, `application`, or `handler` variable in the entry file.
-# We import the project's `app` and expose it as `application`.
-# If importing fails (e.g. due to runtime mismatch), provide a minimal fallback app that
-# returns the import error so the deployment can start and surface the real issue.
+# Vercel serverless entrypoint — imports the Flask app from app.py (one level up).
+# Vercel's @vercel/python runtime discovers the WSGI app via the `app` or
+# `application` variable in this file.
+
+import sys
+import os
+
+# Make the repo root importable so `from app import app` works even when the
+# working directory is the `api/` sub-folder.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 try:
-    from app import app as application  # import the Flask app defined in app.py
-except Exception as e:
-    # If importing the real app fails, expose a minimal app that returns the error.
-    from flask import Flask
-    application = Flask(__name__)
+    from app import app          # preferred name Vercel looks for
+    application = app            # alias for compatibility
+except Exception as exc:
+    from flask import Flask, jsonify
+    app = Flask(__name__)
+    application = app
 
-    @application.route("/")
-    def _import_error():
-        return (f"Failed to import project app.py: {e}", 500)
+    @app.route("/", defaults={"path": ""})
+    @app.route("/<path:path>")
+    def _import_error(path=""):
+        return jsonify({"error": {"type": "internal",
+                                  "message": f"Failed to import app.py: {exc}"}}), 500

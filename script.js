@@ -1,4 +1,3 @@
-...existing code...
 'use strict';
 
 // Swallow noisy browser-extension errors that have nothing to do with us.
@@ -57,33 +56,162 @@ async function fetchJson(url, opts = {}) {
   return { ok: true, status: r.status, data };
 }
 
+// ============================================================
+//  CLIENT-SIDE STORAGE  (localStorage — all data stays in the browser)
+// ============================================================
+const LS = {
+  // ── Config ──────────────────────────────────────────────
+  DEFAULT_CONFIG: {
+    stream: true, web_search_enabled: false, web_search_results: 5,
+    default_temperature: 0.7, theme: 'dark',
+    default_chat_provider: 'pollinations', default_chat_model: '',
+    default_image_provider: 'pollinations', default_image_model: '',
+    api_keys: {}, provider_config: {},
+    workspace: '', workspace_favorites: [], workspace_history: [],
+  },
+  getConfig() {
+    try { return Object.assign({}, this.DEFAULT_CONFIG, JSON.parse(localStorage.getItem('goatai_config') || '{}')); }
+    catch { return Object.assign({}, this.DEFAULT_CONFIG); }
+  },
+  setConfig(patch) {
+    const cfg = this.getConfig();
+    // Deep-merge api_keys and provider_config
+    if (patch.api_keys) cfg.api_keys = Object.assign(cfg.api_keys || {}, patch.api_keys);
+    if (patch.provider_config) {
+      cfg.provider_config = cfg.provider_config || {};
+      for (const [k, v] of Object.entries(patch.provider_config)) {
+        cfg.provider_config[k] = Object.assign(cfg.provider_config[k] || {}, v);
+      }
+    }
+    const flat = Object.assign(cfg, patch);
+    // Don't double-merge these — already handled above
+    if (patch.api_keys) flat.api_keys = cfg.api_keys;
+    if (patch.provider_config) flat.provider_config = cfg.provider_config;
+    localStorage.setItem('goatai_config', JSON.stringify(flat));
+    return flat;
+  },
+  // ── Chats ───────────────────────────────────────────────
+  getChats() {
+    try { return JSON.parse(localStorage.getItem('goatai_chats') || '[]'); }
+    catch { return []; }
+  },
+  getChat(id) {
+    return this.getChats().find(c => c.id === id) || null;
+  },
+  saveChat(id, body) {
+    const chats = this.getChats().filter(c => c.id !== id);
+    const chat = Object.assign({ id }, body);
+    chats.unshift(chat);
+    // Keep at most 200 chats
+    if (chats.length > 200) chats.splice(200);
+    try { localStorage.setItem('goatai_chats', JSON.stringify(chats)); }
+    catch(e) {
+      // Storage full — drop oldest half and retry
+      const trimmed = chats.slice(0, 100);
+      try { localStorage.setItem('goatai_chats', JSON.stringify(trimmed)); } catch {}
+    }
+  },
+  deleteChat(id) {
+    const chats = this.getChats().filter(c => c.id !== id);
+    localStorage.setItem('goatai_chats', JSON.stringify(chats));
+  },
+  // ── Prompts ─────────────────────────────────────────────
+  getPrompts() {
+    try { return JSON.parse(localStorage.getItem('goatai_prompts') || '{}'); }
+    catch { return {}; }
+  },
+  savePrompt({ id, name, body }) {
+    const prompts = this.getPrompts();
+    const pid = id || `prompt_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+    prompts[pid] = { id: pid, name, body };
+    localStorage.setItem('goatai_prompts', JSON.stringify(prompts));
+    return pid;
+  },
+  deletePrompt(pid) {
+    const prompts = this.getPrompts();
+    delete prompts[pid];
+    localStorage.setItem('goatai_prompts', JSON.stringify(prompts));
+  },
+  // ── Gallery ─────────────────────────────────────────────
+  getGallery() {
+    try { return JSON.parse(localStorage.getItem('goatai_gallery') || '[]'); }
+    catch { return []; }
+  },
+  addGalleryItem(item) {
+    const items = this.getGallery();
+    items.unshift(item);
+    if (items.length > 100) items.splice(100);
+    try { localStorage.setItem('goatai_gallery', JSON.stringify(items)); }
+    catch(e) {
+      // Storage full — drop images (they're large base64 strings)
+      const trimmed = items.slice(0, 20);
+      try { localStorage.setItem('goatai_gallery', JSON.stringify(trimmed)); } catch {}
+    }
+  },
+  deleteGalleryItem(name) {
+    const items = this.getGallery().filter(it => it.name !== name);
+    localStorage.setItem('goatai_gallery', JSON.stringify(items));
+  },
+  clearGallery() { localStorage.removeItem('goatai_gallery'); },
+};
+
+// ── Helper: build the config payload to send to every API call ─────────────
+function _apiConfig() {
+  const cfg = state.config || LS.getConfig();
+  // Map api_keys: strip __SET__ sentinel — send actual key only
+  // Keys are stored verbatim (never __SET__) in this client-side implementation
+  return cfg;
+}
+
+// ── API: only real network calls remain ────────────────────────────────────
 const API = {
-  config:        () => fetchJson('/api/config'),
-  saveConfig:    (b) => fetchJson('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b) }),
-  setWorkspace:  (workspace, create=false) => fetchJson('/api/workspace/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ workspace, create }) }),
-  providers:     () => fetchJson('/api/providers'),
-  providerModels:(p) => fetchJson(`/api/providers/${p}/models`),
-  chats:         () => fetchJson('/api/chats'),
-  getChat:       (id) => fetchJson(`/api/chats/${id}`),
-  saveChat:      (id, body) => fetchJson(`/api/chats/${id}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }),
-  deleteChat:    (id) => fetchJson(`/api/chats/${id}`, { method:'DELETE' }),
-  prompts:       () => fetchJson('/api/prompts'),
-  savePrompt:    (p) => fetchJson('/api/prompts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(p) }),
-  deletePrompt:  (pid) => fetchJson(`/api/prompts/${pid}`, { method:'DELETE' }),
-  fsList:        (path) => fetchJson(`/api/fs/list?path=${encodeURIComponent(path||'')}`),
-  fsRead:        (path) => fetchJson(`/api/fs/read?path=${encodeURIComponent(path)}`),
-  fsWrite:       (path, content) => fetchJson('/api/fs/write', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path, content }) }),
-  fsMkdir:       (path) => fetchJson('/api/fs/mkdir', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path }) }),
-  fsDelete:      (path) => fetchJson('/api/fs/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path }) }),
-  shellExec:     (cmd) => fetchJson('/api/shell/exec', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ cmd }) }),
-  gallery:       () => fetchJson('/api/gallery'),
-  galleryDelete: (name) => fetchJson(`/api/gallery/${encodeURIComponent(name)}`, { method:'DELETE' }),
-  galleryClear:  () => fetchJson('/api/gallery/clear', { method:'POST' }),
-  agentCancel:   (runId) => fetchJson(`/api/agent/cancel/${runId}`, { method:'POST' }),
+  // Metadata from server (providers list, system prompts, model categories)
+  config: () => fetchJson('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: _apiConfig() }),
+  }),
+  // Per-provider model list (passes keys so paid providers work)
+  providerModels: (p) => fetchJson(`/api/providers/${p}/models`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: _apiConfig() }),
+  }),
+  // Voices
   pollinationsVoices: () => fetchJson('/api/pollinations/voices'),
   openaiVoices:  () => fetchJson('/api/openai/voices'),
-  elevenVoices:  () => fetchJson('/api/elevenlabs/voices'),
-  translate:     (b) => fetchJson('/api/translate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b) }),
+  elevenVoices:  (b) => fetchJson('/api/elevenlabs/voices', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ config: _apiConfig() }, b || {})),
+  }),
+  // Agent cancel
+  agentCancel:   (runId) => fetchJson(`/api/agent/cancel/${runId}`, { method:'POST' }),
+  // Translate
+  translate:     (b) => fetchJson('/api/translate', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(Object.assign({ config: _apiConfig() }, b)),
+  }),
+
+  // ── Client-side shims (localStorage) ──────────────────────────────────
+  saveConfig:    (patch) => { const cfg = LS.setConfig(patch); state.config = cfg; return Promise.resolve({ ok: true, data: { config: cfg } }); },
+  setWorkspace:  (workspace) => { const cfg = LS.setConfig({ workspace }); state.config = cfg; return Promise.resolve({ ok: true, data: { workspace } }); },
+  chats:         () => Promise.resolve({ ok: true, data: { chats: LS.getChats().map(c => ({ id: c.id, title: c.title, provider: c.provider, model: c.model, message_count: (c.messages||[]).length })) } }),
+  getChat:       (id) => { const c = LS.getChat(id); return Promise.resolve(c ? { ok: true, data: { chat: c } } : { ok: false, error: { type: 'not_found', message: 'Chat not found' } }); },
+  saveChat:      (id, body) => { LS.saveChat(id, body); return Promise.resolve({ ok: true, data: {} }); },
+  deleteChat:    (id) => { LS.deleteChat(id); return Promise.resolve({ ok: true, data: {} }); },
+  prompts:       () => Promise.resolve({ ok: true, data: { prompts: LS.getPrompts() } }),
+  savePrompt:    (p) => { const pid = LS.savePrompt(p); return Promise.resolve({ ok: true, data: { id: pid } }); },
+  deletePrompt:  (pid) => { LS.deletePrompt(pid); return Promise.resolve({ ok: true, data: {} }); },
+  gallery:       () => Promise.resolve({ ok: true, data: { items: LS.getGallery() } }),
+  galleryDelete: (name) => { LS.deleteGalleryItem(name); return Promise.resolve({ ok: true, data: {} }); },
+  galleryClear:  () => { LS.clearGallery(); return Promise.resolve({ ok: true, data: {} }); },
+  // Files / shell — not supported on Vercel (serverless)
+  fsList:   () => Promise.resolve({ ok: false, error: { type: 'internal', message: 'File system not available in serverless mode.' } }),
+  fsRead:   () => Promise.resolve({ ok: false, error: { type: 'internal', message: 'File system not available in serverless mode.' } }),
+  fsWrite:  () => Promise.resolve({ ok: false, error: { type: 'internal', message: 'File system not available in serverless mode.' } }),
+  fsMkdir:  () => Promise.resolve({ ok: false, error: { type: 'internal', message: 'File system not available in serverless mode.' } }),
+  fsDelete: () => Promise.resolve({ ok: false, error: { type: 'internal', message: 'File system not available in serverless mode.' } }),
+  shellExec:() => Promise.resolve({ ok: false, error: { type: 'internal', message: 'Shell not available in serverless mode.' } }),
 };
 
 // ----- State -----
@@ -293,25 +421,32 @@ function bindShortcuts() {
 //  CONFIG / PROVIDERS / MODELS
 // ============================================================
 async function loadConfig() {
-  const r = await API.config();
-  if (!r.ok) { toast(`Config: ${describeError(r.error)}`, 'error'); return; }
-  state.config = r.data.config;
-  state.providers = r.data.providers;
-  state.systemPrompts = r.data.system_prompts || {};
-  state.visionModels = r.data.vision_models || {};
-  state.toolModels = r.data.tool_models || {};
-  state.uncensoredModels = r.data.uncensored_models || {};
+  // Load user prefs from localStorage
+  state.config = LS.getConfig();
   state.theme = state.config.theme || 'dark';
-  $('aboutPlatform').textContent = r.data.platform || 'local';
-  // Settings UI
-  $('streamEnabledSetting').checked = !!state.config.stream;
-  $('webSearchEnabledSetting').checked = !!state.config.web_search_enabled;
-  $('webSearchResultsSetting').value = state.config.web_search_results || 5;
-  $('defaultTempSetting').value = state.config.default_temperature || 0.7;
-  $('defaultTempVal').textContent = (+state.config.default_temperature || 0.7).toFixed(1);
-  $('chatTemperature').value = state.config.default_temperature || 0.7;
-  $('chatTemperatureVal').textContent = (+state.config.default_temperature || 0.7).toFixed(1);
-  $('workspaceInput').value = state.config.workspace || '';
+
+  // Load static metadata from server (providers, system prompts, model categories)
+  const r = await API.config();
+  if (r.ok) {
+    state.providers = r.data.providers || {};
+    state.systemPrompts = r.data.system_prompts || {};
+    state.visionModels = r.data.vision_models || {};
+    state.toolModels = r.data.tool_models || {};
+    state.uncensoredModels = r.data.uncensored_models || {};
+    if ($('aboutPlatform')) $('aboutPlatform').textContent = r.data.platform || 'vercel';
+  } else {
+    toast(`Could not reach server: ${describeError(r.error)}`, 'error');
+  }
+
+  // Populate settings UI from localStorage config
+  if ($('streamEnabledSetting')) $('streamEnabledSetting').checked = !!state.config.stream;
+  if ($('webSearchEnabledSetting')) $('webSearchEnabledSetting').checked = !!state.config.web_search_enabled;
+  if ($('webSearchResultsSetting')) $('webSearchResultsSetting').value = state.config.web_search_results || 5;
+  if ($('defaultTempSetting')) $('defaultTempSetting').value = state.config.default_temperature || 0.7;
+  if ($('defaultTempVal')) $('defaultTempVal').textContent = (+state.config.default_temperature || 0.7).toFixed(1);
+  if ($('chatTemperature')) $('chatTemperature').value = state.config.default_temperature || 0.7;
+  if ($('chatTemperatureVal')) $('chatTemperatureVal').textContent = (+state.config.default_temperature || 0.7).toFixed(1);
+  if ($('workspaceInput')) $('workspaceInput').value = '';  // workspace N/A in serverless
   state.webSearchOn = !!state.config.web_search_enabled;
   applyToolbarBadges();
   renderKeysGrid();
@@ -392,9 +527,10 @@ function fillProviderSelect(selectId, capability, def) {
     const opt = document.createElement('option');
     opt.value = pid;
     let badge = meta.free ? ' · free' : meta.free_tier ? ' · free tier' : '';
-    let ok = (meta.active || meta.free) ? '' : ' · key needed';
+    const hasKey = !!(state.config?.api_keys || {})[pid];
+    let ok = (meta.free || meta.free_tier || hasKey) ? '' : ' · key needed';
     opt.textContent = `${meta.name || pid}${badge}${ok}`;
-    if (!meta.active && !meta.free) opt.style.color = 'var(--ink-faint)';
+    if (!meta.free && !meta.free_tier && !hasKey) opt.style.color = 'var(--ink-faint)';
     sel.appendChild(opt);
   }
   if (def && ids.includes(def)) sel.value = def;
@@ -651,8 +787,13 @@ async function sendChat() {
   const provider = $('chatProvider').value;
   const model    = $('chatModel').value;
   if (!model) return toast('No model selected', 'error');
-  if (!state.providers[provider]?.free && !state.providers[provider]?.active) {
-    return toast(`Add an API key for ${state.providers[provider]?.name || provider} in Settings`, 'error');
+  // Check if provider needs a key and whether the user has stored one
+  const provMeta = state.providers[provider] || {};
+  if (!provMeta.free && !provMeta.free_tier) {
+    const savedKey = (state.config?.api_keys || {})[provider] || '';
+    if (!savedKey) {
+      return toast(`Add an API key for ${provMeta.name || provider} in Settings`, 'error');
+    }
   }
 
   // Add user message
@@ -697,6 +838,7 @@ async function sendChat() {
       web_search: state.webSearchOn,
       system: state.currentChat.system || undefined,
       system_preset: state.currentChat.system_preset || undefined,
+      config: _apiConfig(),
     };
     const r = await fetch('/api/chat', {
       method: 'POST',
@@ -817,7 +959,12 @@ async function sendChatImage(prompt) {
   renderMessages();
 
   try {
-    const body = { prompt: params.prompt, n: params.n };
+    const body = {
+      prompt: params.prompt, n: params.n,
+      provider: $('imageProvider').value,
+      model: $('imageModel').value,
+      config: _apiConfig(),
+    };
     if (params.size) body.size = params.size;
     if (params.model) body.model = params.model;
     
@@ -837,6 +984,10 @@ async function sendChatImage(prompt) {
         ...urls.map((u, idx) => `**Image ${idx + 1} prompt:** ${usedPrompt}\n\n![image](${u})`),
         `*via ${r.data.provider}/${r.data.model}*`
       ].join('\n\n');
+      // Save to localStorage gallery
+      urls.forEach((url, i) => {
+        LS.addGalleryItem({ name: `chat_img_${Date.now()}_${i}.png`, url, kind: 'image', prompt: usedPrompt, ts: Date.now() });
+      });
     }
     renderMessages();
     saveCurrentChat();
@@ -1145,7 +1296,7 @@ async function enhanceImagePrompt() {
   try {
     const r = await fetchJson('/api/enhance-prompt', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ prompt: p }),
+      body: JSON.stringify({ prompt: p, config: _apiConfig() }),
     });
     if (r.ok) { $('imagePrompt').value = r.data.prompt; toast('Prompt enhanced', 'success'); }
     else toast(describeError(r.error), 'error');
@@ -1185,6 +1336,7 @@ async function generateImages() {
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating…';
   $('imageHint').textContent = 'Generating…';
   try {
+    body.config = _apiConfig();
     const r = await fetchJson('/api/image', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body),
@@ -1196,6 +1348,16 @@ async function generateImages() {
     }
     $('imageHint').textContent = `${r.data.images.length} image(s) via ${r.data.provider}/${r.data.model}`;
     renderImageResults(r.data.images, prompt);
+    // Save to localStorage gallery
+    (r.data.images || []).forEach((url, i) => {
+      LS.addGalleryItem({
+        name: `img_${Date.now()}_${i}.png`,
+        url,
+        kind: 'image',
+        prompt: $('imagePrompt').value.trim(),
+        ts: Date.now(),
+      });
+    });
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<i class="fa-solid fa-sparkles"></i> Generate';
@@ -1281,6 +1443,7 @@ async function generateTTS() {
         model: $('ttsModel').value,
         voice: $('ttsVoice').value,
         text,
+        config: _apiConfig(),
       }),
     });
     if (!r.ok) { toast(describeError(r.error), 'error'); $('ttsResult').innerHTML = ''; return; }
@@ -1327,6 +1490,7 @@ async function transcribeSTT() {
     fd.append('audio', state.sttFile);
     fd.append('provider', $('sttProvider').value);
     fd.append('model', $('sttModel').value);
+    fd.append('config', JSON.stringify(_apiConfig()));
     const r = await fetch('/api/stt', { method:'POST', body: fd });
     const data = await r.json();
     if (!r.ok) {
@@ -1347,22 +1511,21 @@ function bindAgent() {
   $$('.chip[data-example]').forEach(c => {
     c.addEventListener('click', () => { $('agentTask').value = c.dataset.example; });
   });
-  $('agentWsSwitchBtn').addEventListener('click', async () => {
-    const v = $('agentWsInput').value.trim();
-    if (!v) return;
-    const r = await API.setWorkspace(v, true);
-    if (r.ok) { state.config.workspace = r.data.workspace; refreshSidebarWorkspace(); toast(`Workspace: ${r.data.workspace}`, 'success'); }
-    else toast(describeError(r.error), 'error');
-  });
-  $('agentWsInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('agentWsSwitchBtn').click(); });
+  if ($('agentWsSwitchBtn')) {
+    $('agentWsSwitchBtn').addEventListener('click', () => {
+      toast('Workspace switching is not available in serverless mode.', 'info');
+    });
+  }
+  if ($('agentWsInput')) {
+    $('agentWsInput').placeholder = 'N/A (serverless)';
+    $('agentWsInput').disabled = true;
+  }
 }
 
 function refreshSidebarWorkspace() {
-  if (!state.config) return;
-  const ws = state.config.workspace || '';
-  const home = '/home/' + (navigator.userAgent.includes('Win') ? 'user' : (window.location.hostname || 'user'));
-  $('sidebarWorkspacePath').textContent = shortenPath(ws, home);
-  $('agentWsPath').textContent = shortenPath(ws, home);
+  // Workspace N/A in serverless mode
+  if ($('sidebarWorkspacePath')) $('sidebarWorkspacePath').textContent = '(serverless)';
+  if ($('agentWsPath')) $('agentWsPath').textContent = '(serverless)';
 }
 
 async function runAgent() {
@@ -1400,6 +1563,7 @@ async function runAgent() {
       body: JSON.stringify({
         run_id, task, provider, model,
         max_steps, steering: $('agentSteering').value,
+        config: _apiConfig(),
       }),
       signal: ctrl.signal,
     });
@@ -2028,25 +2192,16 @@ function bindSettings() {
     applyToolbarBadges();
   });
 
-  $('saveWorkspaceBtn').addEventListener('click', async () => {
-    const w = $('workspaceInput').value.trim();
-    const r = await API.setWorkspace(w, true);
-    if (r.ok) {
-      state.config.workspace = r.data.workspace;
-      refreshSidebarWorkspace();
-      toast('Workspace updated', 'success');
-      renderWorkspaceLists();
-    } else toast(describeError(r.error), 'error');
-  });
-  $('workspaceFavoriteBtn').addEventListener('click', async () => {
-    const w = state.config.workspace;
-    state.config.workspace_favorites = state.config.workspace_favorites || [];
-    if (!state.config.workspace_favorites.includes(w)) {
-      state.config.workspace_favorites.unshift(w);
-      await API.saveConfig({ workspace_favorites: state.config.workspace_favorites });
-      renderWorkspaceLists();
-    }
-  });
+  if ($('saveWorkspaceBtn')) {
+    $('saveWorkspaceBtn').addEventListener('click', () => {
+      toast('Workspace is not available in serverless mode.', 'info');
+    });
+  }
+  if ($('workspaceFavoriteBtn')) {
+    $('workspaceFavoriteBtn').addEventListener('click', () => {
+      toast('Workspace favorites are not available in serverless mode.', 'info');
+    });
+  }
 
   $$('.theme-opt').forEach(b => {
     b.addEventListener('click', () => applyTheme(b.dataset.theme));
@@ -2054,25 +2209,21 @@ function bindSettings() {
 }
 
 function renderWorkspaceLists() {
+  // Workspace is not available in serverless/Vercel mode
   const fav = $('workspaceFavorites');
-  fav.innerHTML = (state.config.workspace_favorites || []).map(w =>
-    `<button class="btn" data-ws="${escapeHtml(w)}">${escapeHtml(w)}</button>`).join('') || '<span class="help">None yet.</span>';
+  if (fav) fav.innerHTML = '<span class="help">Not available in serverless mode.</span>';
   const hist = $('workspaceHistory');
-  hist.innerHTML = (state.config.workspace_history || []).map(w =>
-    `<button class="btn" data-ws="${escapeHtml(w)}">${escapeHtml(w)}</button>`).join('') || '<span class="help">None yet.</span>';
-  $$('[data-ws]').forEach(b => b.addEventListener('click', async () => {
-    const r = await API.setWorkspace(b.dataset.ws, false);
-    if (r.ok) { state.config.workspace = r.data.workspace; refreshSidebarWorkspace(); $('workspaceInput').value = r.data.workspace; toast('Switched', 'success'); }
-    else toast(describeError(r.error), 'error');
-  }));
+  if (hist) hist.innerHTML = '<span class="help">Not available in serverless mode.</span>';
 }
 
 function applyTheme(theme) {
   document.body.setAttribute('data-theme', theme);
   const lite = $('hljs-light'); const dark = $('hljs-dark');
-  if (theme === 'paper') { lite.disabled = false; dark.disabled = true; }
-  else { lite.disabled = true; dark.disabled = false; }
-  state.config.theme = theme;
+  if (lite && dark) {
+    if (theme === 'paper') { lite.disabled = false; dark.disabled = true; }
+    else { lite.disabled = true; dark.disabled = false; }
+  }
+  if (state.config) state.config.theme = theme;
   API.saveConfig({ theme });
 }
 
@@ -2106,13 +2257,18 @@ function renderKeysGrid() {
         <a href="${escapeHtml(meta.docs || '#')}" target="_blank" rel="noopener">Get key →</a>
       </div>`;
     if (!meta.free && !meta.local) {
-      const hasKey = state.config.api_keys[pid] === '__SET__';
+      const storedKey = (state.config.api_keys || {})[pid] || '';
+      const hasKey = storedKey.length > 0;
       body += `
         <div class="key-card-input">
-          <input type="password" placeholder="${escapeHtml(meta.key_hint || '')}" data-key="${pid}" value="${hasKey ? '' : ''}"/>
+          <input type="password" placeholder="${escapeHtml(meta.key_hint || '')}" data-key="${pid}" value=""/>
           <button class="btn btn-primary" data-save-key="${pid}">${hasKey ? 'Update' : 'Save'}</button>
           ${hasKey ? `<button class="btn btn-danger" data-clear-key="${pid}"><i class="fa-regular fa-trash-can"></i></button>` : ''}
         </div>`;
+      if (hasKey) {
+        // Show masked indicator that key is saved
+        body += `<div class="key-card-saved"><i class="fa-solid fa-check-circle" style="color:var(--accent)"></i> Key saved</div>`;
+      }
     }
     if (pid === 'cloudflare') {
       const acct = (state.config.provider_config?.cloudflare?.account_id) || '';
@@ -2139,21 +2295,26 @@ function renderKeysGrid() {
     b.addEventListener('click', async () => {
       const pid = b.dataset.saveKey;
       const inp = root.querySelector(`[data-key="${pid}"]`);
-      const v = inp.value;
-      const r = await API.saveConfig({ api_keys: { [pid]: v } });
-      if (r.ok) {
-        toast('Saved', 'success');
-        await loadConfig();
-        await fetchModelsForProvider(pid);
-        populateProviderSelectors();
-      }
+      const v = (inp.value || '').trim();
+      if (!v) { toast('Enter a key first', 'error'); return; }
+      await API.saveConfig({ api_keys: { [pid]: v } });
+      inp.value = '';
+      toast('Key saved', 'success');
+      // Refresh model list for this provider now that it has a key
+      delete state.modelFetches[pid];
+      await fetchModelsForProvider(pid);
+      populateProviderSelectors();
+      renderKeysGrid();
     });
   });
   root.querySelectorAll('[data-clear-key]').forEach(b => {
     b.addEventListener('click', async () => {
       const pid = b.dataset.clearKey;
-      const r = await API.saveConfig({ api_keys: { [pid]: '' } });
-      if (r.ok) { toast('Cleared', 'success'); await loadConfig(); }
+      if (!await confirmModal(`Remove saved key for ${state.providers[pid]?.name || pid}?`, { okText: 'Remove', danger: true })) return;
+      await API.saveConfig({ api_keys: { [pid]: '' } });
+      delete state.modelFetches[pid];
+      toast('Key removed', 'success');
+      renderKeysGrid();
     });
   });
   root.querySelectorAll('[data-cf-account]').forEach(inp => {
