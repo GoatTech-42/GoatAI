@@ -31,7 +31,6 @@ PROVIDER_IDS = [
     "openrouter", "together", "fireworks", "perplexity",
     "cohere", "anyscale",
     "replicate", "stability", "elevenlabs", "deepl",
-    "webgpu",
 ]
 
 PROVIDERS: dict[str, dict[str, Any]] = {
@@ -228,15 +227,6 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "key_hint": "…:fx (free) or paid",
         "docs": "https://www.deepl.com/account/summary",
         "description": "Best-in-class machine translation. Free tier: 500k chars/month.",
-    },
-    "webgpu": {
-        "name": "WebGPU (in-browser)", "short": "wgp", "color": "#8b5cf6",
-        "capabilities": ["chat"],
-        "key_hint": "Runs in your browser. No key, no network.",
-        "docs": "https://huggingface.co/docs/transformers.js",
-        "free": True,
-        "local": True,
-        "description": "Pre-vetted ONNX models that actually load in transformers.js v3.",
     },
 }
 
@@ -463,10 +453,6 @@ STATIC_MODELS: dict[str, dict[str, list[str]]] = {
     "deepl": {
         "translate": ["deepl-classic", "deepl-next-gen"],
     },
-    "webgpu": {
-        "chat": ["onnx-community/Llama-3.2-1B-Instruct-q4f16",
-                 "onnx-community/Qwen2.5-Coder-0.5B-Instruct"],
-    },
 }
 
 VISION_MODELS = {
@@ -496,7 +482,6 @@ VISION_MODELS = {
     "stability":     set(),
     "elevenlabs":    set(),
     "deepl":         set(),
-    "webgpu":        set(),
     "duckduckgo":    set(),
 }
 
@@ -526,7 +511,6 @@ TOOL_CALL_MODELS = {
     "stability":     set(),
     "elevenlabs":    set(),
     "deepl":         set(),
-    "webgpu":        set(),
     "duckduckgo":    set(),
 }
 
@@ -542,7 +526,6 @@ UNCENSORED_MODELS = {
         "gryphe/mythomax-l2-13b:free",
         "neversleep/llama-3-lumimaid-8b:free",
     },
-    "webgpu": {"*"},
 }
 
 SYSTEM_PROMPTS = {
@@ -1428,10 +1411,7 @@ def _agent_call_model(provider, model, messages, use_native_tools, req_payload):
             body["tools"] = AGENT_TOOLS_SCHEMA
             body["tool_choice"] = "auto"
 
-        if provider == "webgpu":
-            return {"error": _error_obj(400, "WebGPU is browser-only; use a server-side provider for agents",
-                                        provider=provider, model=model)}
-        elif provider == "pollinations":
+        if provider == "pollinations":
             url = "https://text.pollinations.ai/openai/chat/completions"
             headers = _headers_for_provider("pollinations", "", None)
         elif provider in OPENAI_COMPAT_BASE:
@@ -1622,8 +1602,6 @@ def api_chat():
     sys_pre  = str(p.get("system_preset") or "")
 
     if provider not in PROVIDERS: return _error_response(400, "Unknown provider")
-    if provider == "webgpu":
-        return _error_response(400, "WebGPU runs client-side. Use the Local AI tab.", error_type="bad_request")
     if not model: return _error_response(400, "Model required")
     if not _provider_is_active(p, provider):
         return _error_response(401, f"Provider '{provider}' not configured — add your API key in Settings", error_type="auth")
