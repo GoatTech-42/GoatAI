@@ -742,12 +742,17 @@
     </section>
   </main>
 
-  <!-- ============ MODALS ============ -->
-  <div class="modal-backdrop" id="sysModal" hidden data-modal>
-    <div class="modal" role="dialog">
+  <!-- ============ INLINE PANELS (NO POPUPS) ============
+       These are NOT modal popups. They are inline panels that
+       appear in the normal page flow. They cannot trap the user
+       and are always closable via the X button, ESC key, or by
+       simply scrolling away. The .modal-backdrop class is kept
+       for backward-compat but is no longer fullscreen. -->
+  <div class="inline-panel" id="sysModal" hidden data-panel data-modal>
+    <div class="modal" role="region" aria-label="System prompt">
       <div class="modal-header">
         <h3>System prompt</h3>
-        <button class="toolbar-btn modal-dismiss"><i class="fa-solid fa-xmark"></i></button>
+        <button class="toolbar-btn modal-dismiss panel-close" aria-label="Close" data-close><i class="fa-solid fa-xmark"></i></button>
       </div>
       <textarea id="sysModalText" placeholder="Describe how the assistant should behave…"></textarea>
       <div class="modal-row">
@@ -755,17 +760,17 @@
         <button class="btn" id="sysModalSaveToLibrary"><i class="fa-regular fa-bookmark"></i> Save to library</button>
       </div>
       <div class="modal-footer">
-        <button class="btn modal-dismiss">Cancel</button>
+        <button class="btn modal-dismiss" data-close>Cancel</button>
         <button class="btn btn-primary" id="sysModalSave">Apply</button>
       </div>
     </div>
   </div>
 
-  <div class="modal-backdrop" id="promptModal" hidden data-modal>
-    <div class="modal" role="dialog">
+  <div class="inline-panel" id="promptModal" hidden data-panel data-modal>
+    <div class="modal" role="region" aria-label="Edit prompt">
       <div class="modal-header">
         <h3 id="promptModalTitle">Edit prompt</h3>
-        <button class="toolbar-btn modal-dismiss"><i class="fa-solid fa-xmark"></i></button>
+        <button class="toolbar-btn modal-dismiss panel-close" aria-label="Close" data-close><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div class="modal-body">
         <label>Name</label>
@@ -776,27 +781,30 @@
       <div class="modal-footer">
         <button class="btn btn-danger" id="promptModalDelete" hidden>Delete</button>
         <div style="flex:1;"></div>
-        <button class="btn modal-dismiss">Cancel</button>
+        <button class="btn modal-dismiss" data-close>Cancel</button>
         <button class="btn btn-primary" id="promptModalSave">Save</button>
       </div>
     </div>
   </div>
 
-  <div class="modal-backdrop" id="confirmModal" hidden data-modal>
-    <div class="modal confirm">
+  <!-- confirmModal kept as harmless inline placeholder; native confirm() is used at runtime -->
+  <div class="inline-panel" id="confirmModal" hidden data-panel data-modal>
+    <div class="modal confirm" role="region" aria-label="Confirm">
       <div class="modal-header">
         <h3 id="confirmTitle">Confirm</h3>
-        <button class="toolbar-btn modal-dismiss"><i class="fa-solid fa-xmark"></i></button>
+        <button class="toolbar-btn modal-dismiss panel-close" aria-label="Close" data-close><i class="fa-solid fa-xmark"></i></button>
       </div>
       <p id="confirmText" class="modal-body"></p>
       <div class="modal-footer">
-        <button class="btn modal-dismiss">Cancel</button>
-        <button class="btn btn-danger" id="confirmOk">Confirm</button>
+        <button class="btn modal-dismiss" data-close>Cancel</button>
+        <button class="btn btn-danger" id="confirmOk" data-close>Confirm</button>
       </div>
     </div>
   </div>
 
   <!-- Legacy "Enter value" promptTextModal removed -->
+  <!-- All custom popups have been replaced with inline panels +
+       native confirm()/prompt() so they are ALWAYS dismissable. -->
 
   <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 

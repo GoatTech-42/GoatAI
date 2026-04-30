@@ -1562,28 +1562,40 @@ select {
   color: var(--ink-soft);
 }
 
-/* ------------- Modals ------------- */
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  backdrop-filter: blur(4px);
+/* ------------- Inline panels (formerly modals) -------------
+ * IMPORTANT: There are intentionally NO fullscreen overlays
+ * in this app. What used to be modal popups are now inline
+ * panels that sit in the normal page flow. This guarantees
+ * the user can NEVER be trapped behind an unclosable popup.
+ * The .modal-backdrop class still exists for backward-compat,
+ * but it is no longer position:fixed and has no backdrop /
+ * blur / z-index trap. */
+.modal-backdrop,
+.inline-panel {
+  position: relative;        /* NOT fixed -- lives in page flow */
+  inset: auto;
+  background: transparent;
+  display: block;
+  z-index: auto;
+  backdrop-filter: none;
+  margin: 18px auto;
+  width: min(100%, 720px);
+  max-width: 100%;
 }
+.modal-backdrop[hidden],
+.inline-panel[hidden] { display: none !important; }
 .modal {
   background: var(--bg-2);
   border: 1px solid var(--rule);
   border-radius: var(--radius-lg);
-  width: 90%; max-width: 640px;
-  max-height: 88vh;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
   display: flex; flex-direction: column;
   overflow: hidden;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md, 0 4px 14px rgba(0,0,0,0.18));
 }
-.modal.confirm { max-width: 460px; }
+.modal.confirm { max-width: 520px; }
 .modal-header {
   display: flex; align-items: center; gap: 12px;
   padding: 14px 18px;

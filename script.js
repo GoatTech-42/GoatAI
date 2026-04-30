@@ -296,37 +296,68 @@ function toast(msg, kind='info', ms=3200) {
   $('toastContainer').appendChild(el);
 }
 
-// ----- Modal helpers -----
-function openModal(id) { const el = $(id); if (el) el.removeAttribute('hidden'); }
-function closeModal(id) {
-  const el = $(id);
-  if (el) el.setAttribute('hidden', '');
-}
-function closeAllModals() {
-  $$('.modal-backdrop[data-modal]').forEach(m => m.setAttribute('hidden', ''));
+// ============================================================
+// NO-POPUP UI POLICY
+// ------------------------------------------------------------
+// This app intentionally has ZERO custom popup/overlay modals.
+// Every "modal" element in the DOM is converted to an inline
+// panel that sits in the normal page flow — it can scroll
+// off-screen, be hidden by toggling [hidden], and CANNOT trap
+// the user. For yes/no and short-text prompts we use the
+// browser's native confirm()/prompt() which the browser itself
+// guarantees are always dismissable.
+//
+// All legacy entry points (openModal, closeModal, confirmModal,
+// promptModal) are kept as thin shims that route to the new
+// inline-panel / native-dialog flow, so existing callers keep
+// working without changes.
+// ============================================================
+
+// Force-strip any element that is acting like a fullscreen
+// overlay (position:fixed, covers the viewport). This is the
+// nuclear safety net — if anything ever ends up stuck on top
+// of the page, this removes its "blocking" power.
+function _killOverlay(el) {
+  if (!el || !el.style) return;
+  el.setAttribute('hidden', '');
+  el.style.display = 'none';
+  el.style.pointerEvents = 'none';
 }
 
-function confirmModal(text, { okText='Confirm', danger=false }={}) {
+function closeAllModals() {
+  // Hide every legacy modal-backdrop. They are also non-blocking
+  // by CSS, but we hide them anyway for cleanliness.
+  $$('.modal-backdrop[data-modal]').forEach(_killOverlay);
+  // Hide every inline panel.
+  $$('.inline-panel[data-panel]').forEach(p => p.setAttribute('hidden', ''));
+}
+
+function openModal(id) {
+  // Route legacy openModal calls to the inline-panel system.
+  const panel = document.getElementById(id);
+  if (!panel) return;
+  // First, make sure ONLY this panel is open (UX: one task at a time).
+  $$('.inline-panel[data-panel]').forEach(p => { if (p !== panel) p.setAttribute('hidden', ''); });
+  panel.removeAttribute('hidden');
+  // If the panel is offscreen (because it lives in the page flow),
+  // scroll it into view so the user can see and interact with it.
+  try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
+}
+function closeModal(id) {
+  const panel = document.getElementById(id);
+  if (panel) panel.setAttribute('hidden', '');
+}
+
+// Native confirm — always closable (browser-guaranteed).
+function confirmModal(text /*, opts */) {
   return new Promise((resolve) => {
-    $('confirmText').textContent = text;
-    const okBtn = $('confirmOk');
-    okBtn.textContent = okText;
-    okBtn.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
-    openModal('confirmModal');
-    const cleanup = (val) => {
-      okBtn.onclick = null;
-      closeModal('confirmModal');
-      resolve(val);
-    };
-    okBtn.onclick = () => cleanup(true);
-    $$('#confirmModal .modal-dismiss').forEach(b => { b.onclick = () => cleanup(false); });
+    let ok = false;
+    try { ok = window.confirm(text); } catch (_) { ok = false; }
+    resolve(!!ok);
   });
 }
 
-// promptModal — REDESIGNED. The custom HTML "Enter value" dialog was getting
-// stuck unclosable in the wild, so we now use the browser's native prompt()
-// which is 100% guaranteed to be dismissable. We also nuke the legacy
-// #promptTextModal element from the DOM at startup so it can never reappear.
+// Native prompt — always closable (browser-guaranteed).
 function promptModal(label, defaultValue='') {
   return new Promise((resolve) => {
     let val = null;
@@ -335,17 +366,28 @@ function promptModal(label, defaultValue='') {
   });
 }
 
-// Belt-and-suspenders: rip the legacy stuck modal out of the DOM entirely.
-function _nukeLegacyPromptModal() {
+// Belt-and-suspenders: at startup AND on DOMContentLoaded, rip
+// the teeth out of every legacy overlay element so nothing can
+// ever be stuck "on top of" the page.
+function _nukeLegacyOverlays() {
   try {
-    const el = document.getElementById('promptTextModal');
-    if (el && el.parentNode) el.parentNode.removeChild(el);
+    // Remove the (long-deleted) legacy "Enter value" modal if it ever shows up.
+    const ghost = document.getElementById('promptTextModal');
+    if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+
+    // For every remaining .modal-backdrop, strip its overlay-ness so
+    // even if some old code path tried to "show" it, it would just
+    // be an inline block in the page (closable by simply scrolling away
+    // or by the inline close button).
+    $$('.modal-backdrop[data-modal]').forEach((el) => {
+      el.classList.add('inline-panel');
+      el.setAttribute('data-panel', '');
+      el.setAttribute('hidden', '');
+    });
   } catch (_) {}
 }
-// Run as early as possible AND on DOMContentLoaded — covers both fast and
-// slow-parse scenarios so the user never sees the stuck "Enter value" popup.
-_nukeLegacyPromptModal();
-document.addEventListener('DOMContentLoaded', _nukeLegacyPromptModal);
+_nukeLegacyOverlays();
+document.addEventListener('DOMContentLoaded', _nukeLegacyOverlays);
 
 // ============================================================
 //  INIT
@@ -395,32 +437,68 @@ async function init() {
 
 // ----- Global -----
 function bindGlobalEvents() {
+  // ESC: force-hide every panel/legacy modal. Capture-phase so nothing can stop it.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      // Force-hide every modal at the DOM level. Capture-phase so nothing can stop it.
-      $$('.modal-backdrop[data-modal]').forEach(m => m.setAttribute('hidden', ''));
+      $$('.modal-backdrop, .inline-panel[data-panel]').forEach((m) => {
+        m.setAttribute('hidden', '');
+      });
     }
   }, true);
+
+  // Periodic safety sweep: every 1.5s, scan the DOM for any element that
+  // looks like a fullscreen overlay (position:fixed covering the viewport)
+  // and that is NOT explicitly allow-listed (toasts, native menus, etc.).
+  // If found and not closable, neutralise it. This is the ultimate
+  // "no unclosable popup" guarantee.
+  const ALLOWLIST_IDS = new Set(['toastContainer']);
+  const ALLOWLIST_CLASSES = ['toast-container', 'toast'];
+  setInterval(() => {
+    try {
+      const all = document.body ? document.body.querySelectorAll('*') : [];
+      for (const el of all) {
+        if (!el || !el.id && !el.className) continue;
+        if (ALLOWLIST_IDS.has(el.id)) continue;
+        if (typeof el.className === 'string' && ALLOWLIST_CLASSES.some(c => el.className.includes(c))) continue;
+        if (el.hasAttribute && el.hasAttribute('hidden')) continue;
+        const cs = window.getComputedStyle(el);
+        if (cs.position !== 'fixed') continue;
+        // Covers most of the viewport?
+        const r = el.getBoundingClientRect();
+        const bigW = r.width  >= window.innerWidth  * 0.85;
+        const bigH = r.height >= window.innerHeight * 0.85;
+        if (!(bigW && bigH)) continue;
+        // It's a fullscreen overlay. Make sure it's dismissable: if it
+        // has no visible close affordance AND no [data-panel]/dialog tag
+        // we recognise, neutralise its blocking behaviour.
+        const hasCloser = el.querySelector && el.querySelector('.modal-dismiss, [data-close], button[aria-label*="lose" i]');
+        if (!hasCloser) {
+          el.style.pointerEvents = 'none';
+          el.setAttribute('aria-hidden', 'true');
+        }
+      }
+    } catch (_) {}
+  }, 1500);
 }
 
 function bindModalDismiss() {
-  // Use event delegation on document so dismiss ALWAYS works — even if a
-  // modal's inner handler is overwritten by promptModal/confirmModal.
+  // Universal close handler. Works for both legacy modals AND inline panels.
+  // Capture-phase so nothing can stopPropagation() us.
   document.addEventListener('click', (e) => {
     const target = e.target;
     if (!target || !target.closest) return;
 
-    // Click on backdrop itself (not inside the modal content) → close.
-    if (target.classList && target.classList.contains('modal-backdrop') && target.hasAttribute('data-modal')) {
-      target.setAttribute('hidden', '');
+    // Click on any .modal-dismiss / [data-close] / .panel-close button → close its parent panel/modal.
+    const dismiss = target.closest('.modal-dismiss, [data-close], .panel-close');
+    if (dismiss) {
+      const host = dismiss.closest('.inline-panel[data-panel], .modal-backdrop[data-modal], .modal-backdrop');
+      if (host) host.setAttribute('hidden', '');
       return;
     }
 
-    // Click on any .modal-dismiss button → close its parent modal.
-    const dismiss = target.closest('.modal-dismiss');
-    if (dismiss) {
-      const bd = dismiss.closest('.modal-backdrop[data-modal]');
-      if (bd) bd.setAttribute('hidden', '');
+    // Click on a legacy overlay backdrop itself → close it.
+    if (target.classList && target.classList.contains('modal-backdrop')) {
+      target.setAttribute('hidden', '');
     }
   }, true);
 }
