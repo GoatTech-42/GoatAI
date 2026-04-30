@@ -1,24 +1,19 @@
 # Vercel serverless entrypoint — imports the Flask app from app.py (one level up).
-# Vercel's @vercel/python runtime discovers the WSGI app via the `app` or
-# `application` variable in this file.
+# Vercel's @vercel/python runtime discovers the WSGI app via a top-level
+# `app`, `application`, or `handler` variable in this file. We therefore
+# import `app` unconditionally so static analysis can find it.
 
-import sys
 import os
+import sys
 
 # Make the repo root importable so `from app import app` works even when the
 # working directory is the `api/` sub-folder.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-try:
-    from app import app          # preferred name Vercel looks for
-    application = app            # alias for compatibility
-except Exception as exc:
-    from flask import Flask, jsonify
-    app = Flask(__name__)
-    application = app
+from app import app  # noqa: E402  — top-level Flask WSGI app discovered by Vercel
 
-    @app.route("/", defaults={"path": ""})
-    @app.route("/<path:path>")
-    def _import_error(path=""):
-        return jsonify({"error": {"type": "internal",
-                                  "message": f"Failed to import app.py: {exc}"}}), 500
+# Aliases for compatibility with various Vercel runtime versions.
+application = app
+handler = app
