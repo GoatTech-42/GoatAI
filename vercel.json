@@ -1,9 +1,28 @@
 {
   "version": 2,
   "builds": [
-    { "src": "app.py", "use": "@vercel/python" }
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": { "maxLambdaSize": "50mb" }
+    },
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "style.css",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "script.js",
+      "use": "@vercel/static"
+    }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "app.py" }
+    { "src": "/style\\.css",  "dest": "/style.css" },
+    { "src": "/script\\.js",  "dest": "/script.js" },
+    { "src": "/api/(.*)",     "dest": "/api/index.py" },
+    { "src": "/(.*)",         "dest": "/index.html" }
   ]
 }

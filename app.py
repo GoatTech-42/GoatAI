@@ -1,60 +1,40 @@
-...existing code...
 from __future__ import annotations
 
 import base64
 import html as html_lib
 import json
-import mimetypes
-import os
-import platform
 import re
-import shutil
-import socket
-import subprocess
-import sys
 import time
 import traceback
 import uuid
-from pathlib import Path
 from threading import Event, Lock
 from typing import Any, Iterator, Optional
 from urllib.parse import quote as urlquote, unquote, urlparse, parse_qs
 
 import requests
 from flask import Flask, Response, jsonify, request, send_from_directory
+from pathlib import Path
 
- 
-BASE_DIR       = Path(__file__).parent.resolve()
-CONFIG_PATH    = BASE_DIR / "config.json"
-CHATS_PATH     = BASE_DIR / "chats.json"
-PROMPTS_PATH   = BASE_DIR / "prompts.json"
-GENERATED_DIR  = BASE_DIR / "generated"
-GENERATED_DIR.mkdir(exist_ok=True)
-
+BASE_DIR = Path(__file__).parent.resolve()
 APP_NAME    = "GoatAI"
 APP_VERSION = "1.0"
-IS_WINDOWS  = platform.system() == "Windows"
 
- 
+# ---------------------------------------------------------------------------
+# Provider registry
+# ---------------------------------------------------------------------------
 PROVIDER_IDS = [
- 
     "pollinations", "llm7", "duckduckgo",
- 
     "cerebras", "groq", "google", "github_models",
     "nvidia_nim", "siliconflow", "cloudflare", "mistral",
     "huggingface",
- 
     "openai", "anthropic", "xai", "deepseek",
     "openrouter", "together", "fireworks", "perplexity",
     "cohere", "anyscale",
     "replicate", "stability", "elevenlabs", "deepl",
- 
     "webgpu",
 ]
 
- 
 PROVIDERS: dict[str, dict[str, Any]] = {
- 
     "pollinations": {
         "name": "Pollinations", "short": "pol", "color": "#1f8f62",
         "capabilities": ["chat", "image", "tts"],
@@ -79,7 +59,6 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "free": True,
         "description": "Private, free. GPT-4o-mini, Claude 3 Haiku, Llama 3.3, o3-mini, Mistral Small.",
     },
- 
     "cerebras": {
         "name": "Cerebras", "short": "crb", "color": "#ff4a4a",
         "capabilities": ["chat"],
@@ -152,7 +131,6 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "free_tier": True,
         "description": "Free inference router. Llama 3.3, Qwen 2.5, FLUX, SD 3.5.",
     },
- 
     "openai": {
         "name": "OpenAI", "short": "oai", "color": "#10a37f",
         "capabilities": ["chat", "image", "tts", "stt"],
@@ -251,7 +229,6 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "docs": "https://www.deepl.com/account/summary",
         "description": "Best-in-class machine translation. Free tier: 500k chars/month.",
     },
- 
     "webgpu": {
         "name": "WebGPU (in-browser)", "short": "wgp", "color": "#8b5cf6",
         "capabilities": ["chat"],
@@ -259,13 +236,12 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "docs": "https://huggingface.co/docs/transformers.js",
         "free": True,
         "local": True,
-        "description": "Pre-vetted ONNX models that actually load in transformers.js v3. No more 'file not found' errors.",
+        "description": "Pre-vetted ONNX models that actually load in transformers.js v3.",
     },
 }
 
 FREE_PROVIDERS = {pid for pid, m in PROVIDERS.items() if m.get("free")}
 
- 
 OPENAI_COMPAT_BASE: dict[str, str] = {
     "openai":        "https://api.openai.com/v1",
     "fireworks":     "https://api.fireworks.ai/inference/v1",
@@ -285,9 +261,7 @@ OPENAI_COMPAT_BASE: dict[str, str] = {
     "anyscale":      "https://api.endpoints.anyscale.com/v1",
 }
 
- 
 STATIC_MODELS: dict[str, dict[str, list[str]]] = {
- 
     "pollinations": {
         "chat":  ["openai-fast", "openai", "openai-large", "openai-reasoning",
                   "evil", "unity", "mistral", "deepseek", "qwen-coder",
@@ -305,7 +279,6 @@ STATIC_MODELS: dict[str, dict[str, list[str]]] = {
                  "meta-llama/Llama-3.3-70B-Instruct-Turbo",
                  "mistralai/Mistral-Small-24B-Instruct-2501"],
     },
- 
     "cerebras": {
         "chat": ["llama-3.3-70b", "llama-4-scout-17b-16e-instruct",
                  "llama-4-maverick-17b-128e-instruct",
@@ -378,7 +351,6 @@ STATIC_MODELS: dict[str, dict[str, list[str]]] = {
                   "black-forest-labs/FLUX.1-dev",
                   "stabilityai/stable-diffusion-3.5-large"],
     },
- 
     "openai": {
         "chat":  ["gpt-5", "gpt-5-mini", "gpt-5-nano",
                   "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
@@ -404,7 +376,6 @@ STATIC_MODELS: dict[str, dict[str, list[str]]] = {
     },
     "openrouter": {
         "chat": [
- 
             "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
             "cognitivecomputations/dolphin3.0-mistral-24b:free",
             "cognitivecomputations/dolphin3.0-r1-mistral-24b:free",
@@ -413,7 +384,6 @@ STATIC_MODELS: dict[str, dict[str, list[str]]] = {
             "nousresearch/hermes-3-llama-3.1-405b:free",
             "gryphe/mythomax-l2-13b:free",
             "neversleep/llama-3-lumimaid-8b:free",
- 
             "deepseek/deepseek-chat-v3.2:free",
             "deepseek/deepseek-r1-0528:free",
             "deepseek/deepseek-r1:free",
@@ -428,7 +398,6 @@ STATIC_MODELS: dict[str, dict[str, list[str]]] = {
             "qwen/qwen3-235b-a22b-2507:free",
             "z-ai/glm-4.5-air:free",
             "moonshotai/kimi-k2:free",
- 
             "openai/gpt-5", "openai/gpt-5-mini",
             "anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.1",
             "xai/grok-4", "xai/grok-code-fast-1",
@@ -494,7 +463,6 @@ STATIC_MODELS: dict[str, dict[str, list[str]]] = {
     "deepl": {
         "translate": ["deepl-classic", "deepl-next-gen"],
     },
- 
     "webgpu": {
         "chat": ["onnx-community/Llama-3.2-1B-Instruct-q4f16",
                  "onnx-community/Qwen2.5-Coder-0.5B-Instruct"],
@@ -577,7 +545,6 @@ UNCENSORED_MODELS = {
     "webgpu": {"*"},
 }
 
- 
 SYSTEM_PROMPTS = {
     "general":   "You are GoatAI, a helpful, accurate, creative AI assistant. Use clear markdown.",
     "coding":    "You are GoatAI Code — an expert programmer. Write clean, well-documented modern code with proper error handling. Fence code with language tags.",
@@ -590,21 +557,16 @@ SYSTEM_PROMPTS = {
     "image_prompt": "Enhance this image prompt with vivid details. Return ONLY the enhanced prompt, no explanation:",
 }
 
-AGENT_SYSTEM = """You are GoatAI Agent v1 — an autonomous coding assistant with sandbox access. You have a POSIX-like shell and a real filesystem.
+AGENT_SYSTEM = """You are GoatAI Agent v1 — an autonomous coding assistant with sandbox access.
 
 HARD RULES:
   1. Use as few LLM calls as possible, but continue until the task is complete.
   2. Include a `finish` tool call at the end with a one-paragraph summary.
   3. Do NOT ask clarifying questions unless blocked.
-  4. Do NOT narrate ("I will now…", "Let me…"). Be action-oriented.
+  4. Do NOT narrate. Be action-oriented.
 
-TOOLS:
-  * Start by inspecting the workspace (view_dir "." or find).
-  * Use `shell` for git/curl/npm/python/node — streams output live.
-  * Prefer `edit_file` for targeted changes. Use `write_file` for new files.
-  * If you create extra files the user did not request, delete them before finishing.
-
-STYLE: Direct. No filler. When using native tool-calling, return tool calls. When done, call finish."""
+TOOLS: shell, view_dir, read_file, write_file, edit_file, grep, find, web_search, fetch_url, finish.
+STYLE: Direct. No filler."""
 
 MODEL_PROMPT_MAP = {
     "code": "coding", "coder": "coding", "codestral": "coding", "devstral": "coding",
@@ -615,109 +577,34 @@ MODEL_PROMPT_MAP = {
     "mythomax": "uncensored", "evil": "uncensored",
 }
 
-
-def get_system_prompt_for_model(model: str, preset: str = "") -> str:
-    if preset and preset in SYSTEM_PROMPTS:
-        return SYSTEM_PROMPTS[preset]
-    m = (model or "").lower()
-    for pattern, key in MODEL_PROMPT_MAP.items():
-        if pattern in m:
-            return SYSTEM_PROMPTS[key]
-    return SYSTEM_PROMPTS["general"]
-
-
- 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "api_keys": {pid: "" for pid in PROVIDER_IDS},
-    "provider_config": {
-        "openrouter": {"referer": "http://localhost:5000", "title": "GoatAI"},
-        "cloudflare": {"account_id": ""},
-        "deepl":      {"plan": "free"},
-    },
-    "workspace": str(BASE_DIR),
-    "workspace_history":  [str(BASE_DIR)],
-    "workspace_favorites":[str(BASE_DIR)],
-    "theme": "paper",
-    "web_search_enabled": False,
-    "web_search_results": 5,
-    "default_temperature": 0.7,
-    "stream": True,
-    "default_chat_provider": "pollinations",
-    "default_chat_model":    "openai-fast",
-    "default_image_provider":"pollinations",
-    "default_image_model":   "flux",
-}
-
-
- 
+# ---------------------------------------------------------------------------
+# Flask app
+# ---------------------------------------------------------------------------
 app = Flask(__name__, static_folder=str(BASE_DIR), static_url_path="")
-_cfg_lock = Lock()
 _cancel_events: dict[str, Event] = {}
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _deep_copy(data):
+    return json.loads(json.dumps(data))
 
-def _deep_copy(data):    return json.loads(json.dumps(data))
 
-
-def _load_json(path: Path, fallback):
-    if not path.exists(): return fallback
+def _extract_error_message(body):
     try:
-        return json.loads(path.read_text("utf-8"))
-    except Exception as exc:
-        print(f"[load_json] {path.name} corrupt: {exc}")
-        return fallback
-
-
-def _save_json(path: Path, data):
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-def load_config() -> dict[str, Any]:
-    cfg = _deep_copy(DEFAULT_CONFIG)
-    disk = _load_json(CONFIG_PATH, {})
-    if not isinstance(disk, dict): return cfg
-    for k in ("workspace", "workspace_history", "workspace_favorites", "theme",
-              "web_search_enabled", "web_search_results",
-              "default_temperature", "stream",
-              "default_chat_provider", "default_chat_model",
-              "default_image_provider", "default_image_model"):
-        if k in disk: cfg[k] = disk[k]
-    keys = disk.get("api_keys") or {}
-    if isinstance(keys, dict):
-        merged = dict(cfg["api_keys"])
-        for k, v in keys.items():
-            merged[str(k)] = str(v or "")
-        cfg["api_keys"] = merged
-    pc_disk = disk.get("provider_config") or {}
-    if isinstance(pc_disk, dict):
-        merged_pc = dict(cfg["provider_config"])
-        for pid, sub in pc_disk.items():
-            if not isinstance(sub, dict): continue
-            base = dict(merged_pc.get(pid, {}))
-            base.update({str(k): str(v or "") for k, v in sub.items()})
-            merged_pc[pid] = base
-        cfg["provider_config"] = merged_pc
-    return cfg
-
-
-def save_config(cfg):
-    with _cfg_lock:
-        _save_json(CONFIG_PATH, cfg)
-
-
-def load_chats():
-    data = _load_json(CHATS_PATH, {})
-    return data if isinstance(data, dict) else {}
-
-
-def save_chats(c): _save_json(CHATS_PATH, c)
-
-
-def load_prompts():
-    data = _load_json(PROMPTS_PATH, {})
-    return data if isinstance(data, dict) else {}
-
-
-def save_prompts(p): _save_json(PROMPTS_PATH, p)
+        parsed = json.loads(body)
+    except Exception:
+        return (body or "").strip()[:300] or "Provider request failed"
+    if isinstance(parsed, dict):
+        err = parsed.get("error")
+        if isinstance(err, dict):
+            return str(err.get("message") or err.get("code") or "Provider request failed")
+        if isinstance(err, str): return err
+        msg = parsed.get("message") or parsed.get("detail")
+        if msg: return str(msg)
+    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+        return str(parsed[0].get("error") or parsed[0].get("message") or "Provider request failed")
+    return "Provider request failed"
 
 
 def _classify(status: int, body_text: str) -> str:
@@ -738,7 +625,7 @@ def _error_obj(status, message, *, body_text="", retry_after=None,
     out = {"type": error_type or _classify(status, body_text),
            "status": int(status), "message": message, "retry_after": retry_after}
     if provider: out["provider"] = provider
-    if model: out["model"] = model
+    if model:    out["model"] = model
     return out
 
 
@@ -746,40 +633,54 @@ def _error_response(status, message, **kwargs):
     return jsonify({"error": _error_obj(status, message, **kwargs)}), status
 
 
-def _workspace_root(cfg=None):
-    cfg = cfg or load_config()
-    configured = Path(str(cfg.get("workspace") or BASE_DIR))
-    root = configured if configured.is_absolute() else (BASE_DIR / configured)
-    try: return root.resolve()
-    except Exception: return BASE_DIR
+def _flatten_content(content):
+    if isinstance(content, str): return content
+    if isinstance(content, list):
+        return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+    return str(content or "")
 
 
-def _resolve_workspace_path(rel_path, cfg=None):
-    rel = (rel_path or "").replace("\\", "/").strip()
-    if rel.startswith("/"):
-        target = Path(rel).resolve()
-    else:
-        rel = rel.lstrip("./")
-        if ".." in rel.split("/"):
-            raise PermissionError("Path escapes workspace")
-        root = _workspace_root(cfg)
-        target = (root / rel).resolve()
-    root = _workspace_root(cfg)
-    try: target.relative_to(root)
-    except ValueError:
-        raise PermissionError(f"Path {target} is outside workspace {root}")
-    return target
+def _strip_tags(s):
+    return re.sub(r"<[^>]+>", " ", s or "")
 
 
-def _provider_key(cfg, provider): return str(cfg.get("api_keys", {}).get(provider, "") or "").strip()
+def get_system_prompt_for_model(model: str, preset: str = "") -> str:
+    if preset and preset in SYSTEM_PROMPTS:
+        return SYSTEM_PROMPTS[preset]
+    m = (model or "").lower()
+    for pattern, key in MODEL_PROMPT_MAP.items():
+        if pattern in m:
+            return SYSTEM_PROMPTS[key]
+    return SYSTEM_PROMPTS["general"]
 
 
-def _provider_is_configured(cfg, provider):
+# ---------------------------------------------------------------------------
+# Config extracted from request (client-side storage model)
+# Each API call sends its own keys/config in the request body under "config".
+# ---------------------------------------------------------------------------
+def _req_cfg(p: dict) -> dict:
+    """Extract per-request config/keys sent by the client."""
+    cfg = p.get("config") or {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _req_key(p: dict, provider: str) -> str:
+    cfg = _req_cfg(p)
+    keys = cfg.get("api_keys") or {}
+    return str(keys.get(provider) or "").strip()
+
+
+def _req_provider_cfg(p: dict, provider: str) -> dict:
+    cfg = _req_cfg(p)
+    return (cfg.get("provider_config") or {}).get(provider) or {}
+
+
+def _provider_is_active(p: dict, provider: str) -> bool:
     if provider in FREE_PROVIDERS: return True
     if provider == "cloudflare":
-        pc = cfg.get("provider_config", {}).get("cloudflare", {})
-        return bool(_provider_key(cfg, "cloudflare")) and bool(pc.get("account_id"))
-    return bool(_provider_key(cfg, provider))
+        pc = _req_provider_cfg(p, "cloudflare")
+        return bool(_req_key(p, "cloudflare")) and bool(pc.get("account_id"))
+    return bool(_req_key(p, provider))
 
 
 def _model_supports_vision(provider, model):
@@ -792,38 +693,25 @@ def _model_supports_tools(provider, model):
     return "*" in tm or model in tm
 
 
-def _providers_payload(cfg):
-    return {pid: {**PROVIDERS.get(pid, {}), "active": _provider_is_configured(cfg, pid)}
+def _providers_payload(p: dict) -> dict:
+    return {pid: {**PROVIDERS.get(pid, {}), "active": _provider_is_active(p, pid)}
             for pid in PROVIDER_IDS}
 
 
-def _headers_for_provider(provider, key, cfg=None):
+def _headers_for_provider(provider, key, openrouter_cfg=None):
     if provider == "anthropic":
-        return {"x-api-key": key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        return {"x-api-key": key, "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"}
     if provider == "openrouter":
-        pc = ((cfg or {}).get("provider_config") or {}).get("openrouter") or {}
+        pc = openrouter_cfg or {}
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
-                "HTTP-Referer": str(pc.get("referer") or "http://localhost:5000"),
+                "HTTP-Referer": str(pc.get("referer") or "https://goatai.app"),
                 "X-Title": str(pc.get("title") or "GoatAI")}
     if provider in ("pollinations", "llm7"):
         h = {"Content-Type": "application/json"}
         if key: h["Authorization"] = f"Bearer {key}"
         return h
     return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-
-
-def _category_from_model(m):
-    m = (m or "").lower()
-    if any(k in m for k in ("sdxl", "stable-diffusion", "flux", "dall", "imagen",
-                             "sana", "gptimage", "kolors", "playground",
-                             "kontext", "z-image", "ideogram", "recraft",
-                             "stable-image")):
-        return "image"
-    if any(k in m for k in ("-audio", "tts", "-speech", "eleven_")): return "tts"
-    if any(k in m for k in ("whisper", "transcribe", "scribe")): return "stt"
-    if "embed" in m: return "embed"
-    if m == "turbo": return "image"
-    return "chat"
 
 
 def _merge_model_catalog(provider, dynamic_ids):
@@ -841,65 +729,23 @@ def _merge_model_catalog(provider, dynamic_ids):
     return base
 
 
-def _extract_error_message(body):
-    try:
-        parsed = json.loads(body)
-    except Exception:
-        return (body or "").strip()[:300] or "Provider request failed"
-    if isinstance(parsed, dict):
-        err = parsed.get("error")
-        if isinstance(err, dict):
-            return str(err.get("message") or err.get("code") or "Provider request failed")
-        if isinstance(err, str): return err
-        msg = parsed.get("message") or parsed.get("detail")
-        if msg: return str(msg)
-    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-        return str(parsed[0].get("error") or parsed[0].get("message") or "Provider request failed")
-    return "Provider request failed"
+def _category_from_model(m):
+    m = (m or "").lower()
+    if any(k in m for k in ("sdxl", "stable-diffusion", "flux", "dall", "imagen",
+                             "sana", "gptimage", "kolors", "playground",
+                             "kontext", "z-image", "ideogram", "recraft",
+                             "stable-image")):
+        return "image"
+    if any(k in m for k in ("-audio", "tts", "-speech", "eleven_")): return "tts"
+    if any(k in m for k in ("whisper", "transcribe", "scribe")): return "stt"
+    if "embed" in m: return "embed"
+    if m == "turbo": return "image"
+    return "chat"
 
 
-def _save_generated_bytes(prefix, ext, content):
-    stamp = int(time.time() * 1000)
-    name = f"{prefix}_{stamp}_{uuid.uuid4().hex[:8]}.{ext}"
-    (GENERATED_DIR / name).write_bytes(content)
-    return f"/generated/{name}"
-
-
- 
-def _normalize_message(msg):
-    role = str(msg.get("role") or "user")
-    content = msg.get("content")
-    image = msg.get("image")
-    if isinstance(content, list):
-        return {"role": role, "content": content}
-    text = "" if content is None else str(content)
-    if image and role == "user":
-        return {"role": role, "content": [
-            {"type": "text", "text": text},
-            {"type": "image_url", "image_url": {"url": str(image)}}
-        ]}
-    return {"role": role, "content": text}
-
-
-def _chat_messages_with_system(messages, system_prompt):
-    out = []
-    if system_prompt: out.append({"role": "system", "content": str(system_prompt)})
-    for m in messages: out.append(_normalize_message(m))
-    return out
-
-
-def _flatten_content(content):
-    if isinstance(content, str): return content
-    if isinstance(content, list):
-        return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
-    return str(content or "")
-
-
-def _strip_tags(s):
-    return re.sub(r"<[^>]+>", " ", s or "")
-
-
- 
+# ---------------------------------------------------------------------------
+# Web search
+# ---------------------------------------------------------------------------
 def _unwrap_ddg_url(href):
     if "/l/?" in href or "uddg=" in href:
         try:
@@ -918,7 +764,6 @@ def web_search(query, max_results=5):
         if not r.ok: return []
         html = r.text
         out = []
-        
         blocks = re.findall(r'<div class="result[\s\S]*?(?:result__body[\s\S]*?</div>\s*</div>|results_links[\s\S]*?</div>)', html)
         if not blocks:
             blocks = re.findall(r'<div class="result__body">([\s\S]*?)</div>\s*</div>', html)
@@ -946,13 +791,15 @@ def format_search_context(results):
     return "\n".join(lines)
 
 
- 
-def _fetch_openai_compat_models(provider, key, cfg):
+# ---------------------------------------------------------------------------
+# Dynamic model fetching
+# ---------------------------------------------------------------------------
+def _fetch_openai_compat_models(provider, key, openrouter_cfg=None):
     try:
         base = OPENAI_COMPAT_BASE.get(provider)
         if not base: return []
         r = requests.get(f"{base}/models",
-                         headers=_headers_for_provider(provider, key, cfg), timeout=15)
+                         headers=_headers_for_provider(provider, key, openrouter_cfg), timeout=15)
         if not r.ok: return []
         data = r.json().get("data", [])
         return [d.get("id") for d in data if d.get("id")]
@@ -997,48 +844,294 @@ def _fetch_cohere_models(key):
         return []
 
 
-def _provider_models(provider, cfg):
-    
-    if provider not in PROVIDERS:
-        return None, (404, "Unknown provider", None)
-    meta = PROVIDERS[provider]
-    if meta.get("local") or provider in ("webgpu",):
-        return _merge_model_catalog(provider, []), (0, "", None)
-    if provider in FREE_PROVIDERS:
-        return _merge_model_catalog(provider, []), (0, "", None)
-    key = _provider_key(cfg, provider)
-    if not key:
-        return _merge_model_catalog(provider, []), (0, "", None)
+# ---------------------------------------------------------------------------
+# Image helpers — returns base64 data-URIs (no disk writes)
+# ---------------------------------------------------------------------------
+def _bytes_to_data_uri(content: bytes, mime: str = "image/png") -> str:
+    return f"data:{mime};base64,{base64.b64encode(content).decode()}"
 
-    dynamic = []
+
+def _audio_bytes_to_data_uri(content: bytes) -> str:
+    return f"data:audio/mpeg;base64,{base64.b64encode(content).decode()}"
+
+
+def _extract_images_from_payload(payload) -> list[str]:
+    """Return list of data-URI strings from a provider image response."""
+    out = []
+    if not isinstance(payload, dict): return out
+
+    data_items = payload.get("data")
+    if isinstance(data_items, list):
+        for item in data_items:
+            if not isinstance(item, dict): continue
+            b64 = item.get("b64_json")
+            if isinstance(b64, str) and b64.strip():
+                try: out.append(_bytes_to_data_uri(base64.b64decode(b64))); continue
+                except Exception: pass
+            url = item.get("url")
+            if isinstance(url, str) and url.strip():
+                try:
+                    rr = requests.get(url, timeout=120)
+                    if rr.ok and rr.content:
+                        ct = rr.headers.get("content-type", "image/png").split(";")[0].strip()
+                        out.append(_bytes_to_data_uri(rr.content, ct))
+                except Exception: pass
+
+    images = payload.get("images")
+    if isinstance(images, list):
+        for item in images:
+            if isinstance(item, str) and item.strip():
+                try: out.append(_bytes_to_data_uri(base64.b64decode(item)))
+                except Exception: pass
+            elif isinstance(item, dict):
+                b64 = item.get("b64_json") or item.get("b64") or item.get("base64") or item.get("image")
+                if isinstance(b64, str) and b64.strip():
+                    try: out.append(_bytes_to_data_uri(base64.b64decode(b64)))
+                    except Exception: pass
+
+    single = payload.get("image")
+    if isinstance(single, str) and single.strip():
+        try: out.append(_bytes_to_data_uri(base64.b64decode(single)))
+        except Exception: pass
+
+    seen: set[str] = set()
+    deduped = []
+    for u in out:
+        if u not in seen:
+            seen.add(u); deduped.append(u)
+    return deduped
+
+
+def _generate_image(provider, model, prompt, size, n, negative, seed, req_payload,
+                    cfg_scale=None, steps=None):
+    """Returns (data_uri_list, (status, msg)). status 0 = OK."""
     try:
-        if provider == "anthropic":
-            dynamic = _fetch_anthropic_models(key)
-        elif provider == "google":
-            dynamic = _fetch_google_models(key)
-        elif provider == "cohere":
-            dynamic = _fetch_cohere_models(key)
-        elif provider in OPENAI_COMPAT_BASE:
-            dynamic = _fetch_openai_compat_models(provider, key, cfg)
-        
+        if provider == "pollinations":
+            model = model or "flux"
+            try: w, h = map(int, size.split("x"))
+            except Exception: w, h = 1024, 1024
+            saved, first_err = [], None
+            for i in range(n):
+                s = (int(seed) + i) if seed is not None else (int(time.time() * 1000) % 100000 + i)
+                url = (f"https://image.pollinations.ai/prompt/{urlquote(prompt)}"
+                       f"?model={urlquote(model)}&width={w}&height={h}&seed={s}&nologo=true")
+                try:
+                    r = requests.get(url, timeout=120)
+                    ct = (r.headers.get("content-type") or "").lower()
+                    if r.ok and r.content and ct.startswith("image"):
+                        mime = ct.split(";")[0].strip()
+                        saved.append(_bytes_to_data_uri(r.content, mime))
+                    elif first_err is None:
+                        first_err = (r.status_code, _extract_error_message(r.text) or "error")
+                except requests.RequestException as e:
+                    if first_err is None: first_err = (503, f"Network: {e}")
+            if saved: return saved, (0, "")
+            return None, first_err or (502, "Pollinations failed")
+
+        key = _req_key(req_payload, provider)
+        if not key:
+            return None, (401, f"No API key for {provider}")
+
+        if provider == "huggingface":
+            r = requests.post(f"https://router.huggingface.co/hf-inference/models/{model}",
+                              headers={"Authorization": f"Bearer {key}"},
+                              json={"inputs": prompt}, timeout=180)
+            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
+            ct = r.headers.get("content-type", "image/png").split(";")[0].strip()
+            return [_bytes_to_data_uri(r.content, ct)], (0, "")
+
+        if provider == "fireworks":
+            try: w, h = map(int, size.split("x"))
+            except Exception: w, h = 1024, 1024
+            model_path = model or "accounts/fireworks/models/flux-1-schnell-fp8"
+            if not model_path.startswith("accounts/"):
+                model_path = f"accounts/fireworks/models/{model_path}"
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            workflow_body = {"prompt": prompt, "width": w, "height": h, "num_images": n}
+            if negative: workflow_body["negative_prompt"] = negative
+            if seed is not None:
+                try: workflow_body["seed"] = int(seed)
+                except Exception: pass
+            for url in [f"https://api.fireworks.ai/inference/v1/workflows/{model_path}/text_to_image",
+                        f"https://api.fireworks.ai/v1/workflows/{model_path}/text_to_image"]:
+                try:
+                    r = requests.post(url, headers=headers, json=workflow_body, timeout=180)
+                    if r.ok:
+                        ct = (r.headers.get("content-type") or "").lower()
+                        if ct.startswith("image") and r.content and n == 1:
+                            return [_bytes_to_data_uri(r.content, ct.split(";")[0].strip())], (0, "")
+                        payload = r.json() if "json" in ct else {}
+                        saved = _extract_images_from_payload(payload)
+                        if saved: return saved, (0, "")
+                except requests.RequestException: pass
+            # fallback
+            compat_body = {"model": model_path, "prompt": prompt, "n": n,
+                           "width": w, "height": h, "response_format": "b64_json"}
+            for base_url in ("https://api.fireworks.ai/inference/v1",
+                             "https://api.fireworks.ai/v1"):
+                try:
+                    r = requests.post(f"{base_url}/images/generations",
+                                      headers=headers, json=compat_body, timeout=180)
+                    if r.ok:
+                        saved = _extract_images_from_payload(r.json())
+                        if saved: return saved, (0, "")
+                except requests.RequestException: pass
+            return None, (502, "Fireworks image generation failed")
+
+        if provider in ("together", "openai", "nvidia_nim", "siliconflow", "xai"):
+            base = OPENAI_COMPAT_BASE.get(provider) or "https://api.openai.com/v1"
+            try: w, h = map(int, size.split("x"))
+            except Exception: w, h = 1024, 1024
+            body = {"model": model, "prompt": prompt, "n": n}
+            if provider in ("together", "siliconflow"):
+                body["width"] = w; body["height"] = h
+                body["response_format"] = "b64_json"
+            else:
+                body["size"] = f"{w}x{h}"
+            r = requests.post(f"{base}/images/generations",
+                              headers={"Authorization": f"Bearer {key}",
+                                       "Content-Type": "application/json"},
+                              json=body, timeout=180)
+            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
+            data = r.json().get("data", [])
+            saved = []
+            for d in data:
+                if d.get("b64_json"):
+                    saved.append(_bytes_to_data_uri(base64.b64decode(d["b64_json"])))
+                elif d.get("url"):
+                    try:
+                        rr = requests.get(d["url"], timeout=120)
+                        if rr.ok:
+                            ct = rr.headers.get("content-type", "image/png").split(";")[0].strip()
+                            saved.append(_bytes_to_data_uri(rr.content, ct))
+                    except Exception: pass
+            return (saved, (0, "")) if saved else (None, (502, "No images returned"))
+
+        if provider == "cloudflare":
+            pc = _req_provider_cfg(req_payload, "cloudflare")
+            account_id = pc.get("account_id", "")
+            if not account_id: return None, (400, "Cloudflare account_id required")
+            try: w, h = map(int, size.split("x"))
+            except Exception: w, h = 1024, 1024
+            r = requests.post(f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
+                              headers={"Authorization": f"Bearer {key}"},
+                              json={"prompt": prompt, "width": w, "height": h}, timeout=180)
+            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
+            ct = r.headers.get("content-type", "image/png").split(";")[0].strip()
+            return [_bytes_to_data_uri(r.content, ct)], (0, "")
+
+        if provider == "replicate":
+            try: w, h = map(int, size.split("x"))
+            except Exception: w, h = 1024, 1024
+            inputs = {"prompt": prompt, "width": w, "height": h, "num_outputs": n}
+            if negative: inputs["negative_prompt"] = negative
+            if seed is not None:
+                try: inputs["seed"] = int(seed)
+                except Exception: pass
+            r = requests.post(f"https://api.replicate.com/v1/models/{model}/predictions",
+                              headers={"Authorization": f"Bearer {key}",
+                                       "Content-Type": "application/json",
+                                       "Prefer": "wait"},
+                              json={"input": inputs}, timeout=300)
+            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
+            j = r.json()
+            output = j.get("output")
+            urls = [output] if isinstance(output, str) else (output or [])
+            saved = []
+            for u in urls[:n]:
+                try:
+                    rr = requests.get(u, timeout=120)
+                    if rr.ok:
+                        ct = rr.headers.get("content-type", "image/png").split(";")[0].strip()
+                        saved.append(_bytes_to_data_uri(rr.content, ct))
+                except Exception: pass
+            return (saved, (0, "")) if saved else (None, (502, "No images returned"))
+
+        if provider == "stability":
+            slug = (model or "stable-image-core").lower()
+            if slug in ("stable-image-ultra", "stable-image-core"):
+                endpoint = f"https://api.stability.ai/v2beta/stable-image/generate/{slug.split('-')[-1]}"
+            else:
+                endpoint = f"https://api.stability.ai/v2beta/stable-image/generate/{slug}"
+            files = {"prompt": (None, prompt), "output_format": (None, "png")}
+            if negative: files["negative_prompt"] = (None, negative)
+            if seed is not None: files["seed"] = (None, str(int(seed)))
+            r = requests.post(endpoint,
+                              headers={"Authorization": f"Bearer {key}", "Accept": "image/*"},
+                              files=files, timeout=180)
+            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
+            return [_bytes_to_data_uri(r.content)], (0, "")
+
+        return None, (400, f"Image not implemented for {provider}")
     except Exception as e:
-        print(f"[_provider_models] {provider}: {e}")
+        traceback.print_exc()
+        return None, (502, str(e))
 
-    return _merge_model_catalog(provider, dynamic), (0, "", None)
+
+def _score_image_model(provider, model_id):
+    m = (model_id or "").lower()
+    p = (provider or "").lower()
+    if "flux" in m and "schnell" in m and p in ("together", "pollinations", "huggingface",
+                                                 "fireworks", "cloudflare", "siliconflow"):
+        return 95
+    if "flux" in m and "schnell" in m and p in ("replicate",): return 90
+    if "flux" in m and ("dev" in m or "1.1-pro" in m or "pro" in m): return 85
+    if "turbo" in m or "playground" in m or "schnell" in m: return 70
+    if "sd3.5" in m or "stable-diffusion-3.5" in m: return 65
+    if "sdxl" in m or "sd3" in m and "3.5" not in m: return 50
+    if "recraft" in m or "ideogram" in m: return 60
+    return 40
 
 
- 
+def _get_all_image_models(req_payload):
+    models_with_score = []
+    for provider_id in PROVIDER_IDS:
+        if provider_id not in STATIC_MODELS: continue
+        models = STATIC_MODELS[provider_id].get("image", [])
+        if not models: continue
+        is_free = provider_id in FREE_PROVIDERS
+        if not is_free and not _provider_is_active(req_payload, provider_id): continue
+        for model_id in models:
+            score = _score_image_model(provider_id, model_id)
+            models_with_score.append((score, provider_id, model_id))
+    models_with_score.sort(key=lambda x: (-x[0], x[1], x[2]))
+    return [(prov, mdl) for _, prov, mdl in models_with_score]
+
+
+# ---------------------------------------------------------------------------
+# Chat helpers
+# ---------------------------------------------------------------------------
+def _normalize_message(msg):
+    role = str(msg.get("role") or "user")
+    content = msg.get("content")
+    image = msg.get("image")
+    if isinstance(content, list):
+        return {"role": role, "content": content}
+    text = "" if content is None else str(content)
+    if image and role == "user":
+        return {"role": role, "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": str(image)}}
+        ]}
+    return {"role": role, "content": text}
+
+
+def _chat_messages_with_system(messages, system_prompt):
+    out = []
+    if system_prompt: out.append({"role": "system", "content": str(system_prompt)})
+    for m in messages: out.append(_normalize_message(m))
+    return out
+
+
 def _openai_compat_stream(url, headers, body, provider, model):
     try:
         with requests.post(url, headers=headers, json=body, stream=True, timeout=600) as r:
             if not r.ok:
                 msg = _extract_error_message(r.text)
                 yield f"data: {json.dumps({'error': _error_obj(r.status_code, msg, provider=provider, model=model)})}\n\n"
-                yield "data: [DONE]\n\n"
-                return
+                yield "data: [DONE]\n\n"; return
             for line in r.iter_lines(decode_unicode=True):
-                if not line: continue
-                if line.startswith(":"): continue
+                if not line or line.startswith(":"): continue
                 if line.startswith("data: "):
                     chunk = line[6:].strip()
                     if chunk == "[DONE]":
@@ -1048,8 +1141,7 @@ def _openai_compat_stream(url, headers, body, provider, model):
                         delta = (((j.get("choices") or [{}])[0].get("delta") or {}).get("content")) or ""
                         if delta:
                             yield f"data: {json.dumps({'delta': delta})}\n\n"
-                    except Exception:
-                        continue
+                    except Exception: continue
     except requests.RequestException as e:
         yield f"data: {json.dumps({'error': _error_obj(502, str(e), error_type='network', provider=provider, model=model)})}\n\n"
     yield "data: [DONE]\n\n"
@@ -1066,22 +1158,19 @@ def _openai_compat_once(url, headers, body):
         return None, (502, str(e))
 
 
- 
 def _anthropic_split(messages, system_prompt):
     sys = system_prompt or ""
     out = []
     for m in messages:
         role = m.get("role")
         if role == "system":
-            sys = (sys + "\n\n" + _flatten_content(m.get("content"))).strip()
-            continue
+            sys = (sys + "\n\n" + _flatten_content(m.get("content"))).strip(); continue
         out.append({"role": "user" if role != "assistant" else "assistant",
                     "content": _flatten_content(m.get("content"))})
     return sys, out
 
 
-def _anthropic_chat_stream(cfg, model, messages, system_prompt, temperature):
-    key = _provider_key(cfg, "anthropic")
+def _anthropic_chat_stream(key, model, messages, system_prompt, temperature):
     sys, msgs = _anthropic_split(messages, system_prompt)
     body = {"model": model, "messages": msgs, "max_tokens": 4096,
             "temperature": min(max(temperature, 0), 1), "stream": True}
@@ -1102,18 +1191,15 @@ def _anthropic_chat_stream(cfg, model, messages, system_prompt, temperature):
                     j = json.loads(chunk)
                     if j.get("type") == "content_block_delta":
                         delta = j.get("delta", {}).get("text", "")
-                        if delta:
-                            yield f"data: {json.dumps({'delta': delta})}\n\n"
-                    elif j.get("type") == "message_stop":
-                        break
+                        if delta: yield f"data: {json.dumps({'delta': delta})}\n\n"
+                    elif j.get("type") == "message_stop": break
                 except Exception: continue
     except requests.RequestException as e:
         yield f"data: {json.dumps({'error': _error_obj(502, str(e), error_type='network', provider='anthropic', model=model)})}\n\n"
     yield "data: [DONE]\n\n"
 
 
-def _google_chat_once(cfg, model, messages, system_prompt, temperature):
-    key = _provider_key(cfg, "google")
+def _google_chat_once(key, model, messages, system_prompt, temperature):
     contents, sys = [], system_prompt or ""
     for m in messages:
         role = "user" if m.get("role") != "assistant" else "model"
@@ -1146,7 +1232,6 @@ def _pseudo_stream(text, err):
     yield "data: [DONE]\n\n"
 
 
- 
 DDG_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
     "Accept": "text/event-stream",
@@ -1162,8 +1247,7 @@ def _ddg_get_vqd():
         r = requests.get("https://duckduckgo.com/duckchat/v1/status",
                          headers=DDG_HEADERS, timeout=15)
         return r.headers.get("x-vqd-4") or r.headers.get("x-vqd-hash-1")
-    except Exception:
-        return None
+    except Exception: return None
 
 
 def _ddg_chat_stream(model, messages, system_prompt=None):
@@ -1193,8 +1277,7 @@ def _ddg_chat_stream(model, messages, system_prompt=None):
                 try:
                     j = json.loads(chunk)
                     delta = j.get("message") or ""
-                    if delta:
-                        yield f"data: {json.dumps({'delta': delta})}\n\n"
+                    if delta: yield f"data: {json.dumps({'delta': delta})}\n\n"
                 except Exception: continue
     except requests.RequestException as e:
         yield f"data: {json.dumps({'error': _error_obj(502, str(e), error_type='network', provider='duckduckgo', model=model)})}\n\n"
@@ -1202,8 +1285,7 @@ def _ddg_chat_stream(model, messages, system_prompt=None):
 
 
 def _ddg_chat_once(model, messages, system_prompt=None):
-    parts = []
-    err_obj = None
+    parts = []; err_obj = None
     for chunk in _ddg_chat_stream(model, messages, system_prompt):
         if not chunk.startswith("data: "): continue
         body = chunk[6:].strip()
@@ -1217,9 +1299,7 @@ def _ddg_chat_once(model, messages, system_prompt=None):
     return "".join(parts), (0, None)
 
 
- 
-def _cohere_chat_stream(cfg, model, messages, system_prompt, temperature):
-    key = _provider_key(cfg, "cohere")
+def _cohere_chat_stream(key, model, messages, system_prompt, temperature):
     body_messages = []
     if system_prompt:
         body_messages.append({"role": "system", "content": system_prompt})
@@ -1239,25 +1319,19 @@ def _cohere_chat_stream(cfg, model, messages, system_prompt, temperature):
                 yield "data: [DONE]\n\n"; return
             for line in r.iter_lines(decode_unicode=True):
                 if not line: continue
-                # Cohere v2 streams JSON-per-line
                 try:
                     j = json.loads(line)
                 except Exception: continue
                 if j.get("type") == "content-delta":
                     delta = j.get("delta", {}).get("message", {}).get("content", {}).get("text", "")
-                    if delta:
-                        yield f"data: {json.dumps({'delta': delta})}\n\n"
-                elif j.get("type") == "message-end":
-                    break
+                    if delta: yield f"data: {json.dumps({'delta': delta})}\n\n"
+                elif j.get("type") == "message-end": break
     except requests.RequestException as e:
         yield f"data: {json.dumps({'error': _error_obj(502, str(e), error_type='network', provider='cohere', model=model)})}\n\n"
     yield "data: [DONE]\n\n"
 
 
- 
-def _cloudflare_chat_once(cfg, model, messages, system_prompt, temperature):
-    key = _provider_key(cfg, "cloudflare")
-    account_id = (cfg.get("provider_config", {}).get("cloudflare", {}) or {}).get("account_id", "")
+def _cloudflare_chat_once(key, account_id, model, messages, system_prompt, temperature):
     if not account_id: return None, (400, "Cloudflare account_id required")
     body_messages = []
     if system_prompt:
@@ -1273,1061 +1347,19 @@ def _cloudflare_chat_once(cfg, model, messages, system_prompt, temperature):
         if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
         j = r.json()
         if j.get("success"):
-            text = j.get("result", {}).get("response", "")
-            return text, (0, None)
+            return j.get("result", {}).get("response", ""), (0, None)
         return None, (502, _extract_error_message(r.text))
     except requests.RequestException as e:
         return None, (502, str(e))
 
 
- 
-@app.after_request
-def add_cors_headers(resp):
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    return resp
-
-
-@app.route("/")
-def index():
-    return send_from_directory(BASE_DIR, "index.html")
-
-
-@app.route("/<path:path>")
-def static_files(path):
-    target = BASE_DIR / path
-    if target.exists() and target.is_file():
-        return send_from_directory(BASE_DIR, path)
-    return send_from_directory(BASE_DIR, "index.html")
-
-
-@app.route("/generated/<path:filename>")
-def generated_files(filename):
-    return send_from_directory(GENERATED_DIR, filename)
-
-
- 
-KEEP = "__KEEP__"
-
-
-@app.route("/api/config", methods=["GET", "POST"])
-def api_config():
-    cfg = load_config()
-    if request.method == "GET":
-        masked = _deep_copy(cfg)
-        masked["api_keys"] = {k: ("__SET__" if v else "") for k, v in cfg.get("api_keys", {}).items()}
-        return jsonify({"config": masked,
-                        "providers": _providers_payload(cfg),
-                        "system_prompts": SYSTEM_PROMPTS,
-                        "vision_models": {k: list(v) for k, v in VISION_MODELS.items()},
-                        "tool_models":  {k: list(v) for k, v in TOOL_CALL_MODELS.items()},
-                        "uncensored_models": {k: list(v) for k, v in UNCENSORED_MODELS.items()},
-                        "version": APP_VERSION,
-                        "platform": platform.system()})
-    payload = request.get_json(silent=True) or {}
-    keys = payload.get("api_keys") or {}
-    if isinstance(keys, dict):
-        for k, v in keys.items():
-            if k not in cfg["api_keys"]: continue
-            if v == KEEP: continue
-            cfg["api_keys"][k] = str(v or "")
-    pc = payload.get("provider_config") or {}
-    if isinstance(pc, dict):
-        for pid, sub in pc.items():
-            if not isinstance(sub, dict): continue
-            target = dict(cfg["provider_config"].get(pid, {}))
-            for k, v in sub.items():
-                if v == KEEP: continue
-                target[str(k)] = str(v or "")
-            cfg["provider_config"][pid] = target
-    for k in ("workspace", "theme", "web_search_enabled", "web_search_results",
-              "default_temperature", "stream",
-              "default_chat_provider", "default_chat_model",
-              "default_image_provider", "default_image_model"):
-        if k in payload: cfg[k] = payload[k]
-    save_config(cfg)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/workspace/set", methods=["POST"])
-def api_workspace_set():
-    cfg = load_config()
-    payload = request.get_json(silent=True) or {}
-    workspace = str(payload.get("workspace") or "").strip()
-    create = bool(payload.get("create"))
-    if not workspace: return _error_response(400, "workspace required")
-    if workspace.startswith("~"): workspace = os.path.expanduser(workspace)
-    p = Path(workspace)
-    if not p.is_absolute(): p = (BASE_DIR / workspace).resolve()
-    if not p.exists():
-        if not create:
-            return _error_response(404, "Path does not exist (set create=true to mkdir)")
-        try: p.mkdir(parents=True, exist_ok=True)
-        except Exception as e: return _error_response(500, f"mkdir failed: {e}")
-    if not p.is_dir(): return _error_response(400, "Not a directory")
-    cfg["workspace"] = str(p)
-    hist = list(cfg.get("workspace_history", []))
-    s = str(p)
-    if s in hist: hist.remove(s)
-    hist.insert(0, s); cfg["workspace_history"] = hist[:20]
-    save_config(cfg)
-    return jsonify({"ok": True, "workspace": s})
-
-
-@app.route("/api/providers", methods=["GET"])
-def api_providers():
-    return jsonify(_providers_payload(load_config()))
-
-
-@app.route("/api/providers/<provider>/models", methods=["GET"])
-def api_provider_models(provider):
-    cfg = load_config()
-    if provider not in PROVIDERS: return _error_response(404, "Unknown provider")
-    catalog, err = _provider_models(provider, cfg)
-    if catalog is None: return _error_response(err[0] or 500, err[1] or "Error")
-    return jsonify({"models": catalog,
-                    "vision": list(VISION_MODELS.get(provider, [])),
-                    "tools":  list(TOOL_CALL_MODELS.get(provider, [])),
-                    "uncensored": list(UNCENSORED_MODELS.get(provider, []))})
-
-
-@app.route("/api/system-prompts", methods=["GET"])
-def api_system_prompts():
-    return jsonify({"prompts": SYSTEM_PROMPTS})
-
-
-@app.route("/api/prompts", methods=["GET", "POST"])
-def api_prompts():
-    if request.method == "GET":
-        return jsonify({"prompts": load_prompts()})
-    payload = request.get_json(silent=True) or {}
-    pid = str(payload.get("id") or uuid.uuid4().hex[:10])
-    name = str(payload.get("name") or "").strip()
-    body = str(payload.get("body") or "").strip()
-    if not name or not body: return _error_response(400, "Name and body required")
-    prompts = load_prompts()
-    prompts[pid] = {"id": pid, "name": name, "body": body, "updated": int(time.time())}
-    save_prompts(prompts)
-    return jsonify({"ok": True, "prompt": prompts[pid]})
-
-
-@app.route("/api/prompts/<pid>", methods=["DELETE"])
-def api_prompt_delete(pid):
-    prompts = load_prompts()
-    if pid in prompts:
-        del prompts[pid]; save_prompts(prompts)
-    return jsonify({"ok": True})
-
-
-@app.route("/api/search", methods=["POST"])
-def api_search():
-    p = request.get_json(silent=True) or {}
-    return jsonify({"results": web_search(str(p.get("query") or ""),
-                                          max_results=int(p.get("max_results", 5) or 5))})
-
-
- 
-@app.route("/api/chats", methods=["GET"])
-def api_chats_list():
-    chats = load_chats()
-    out = []
-    for cid, c in chats.items():
-        out.append({"id": cid, "title": c.get("title") or "Untitled",
-                    "updated": c.get("updated", 0),
-                    "provider": c.get("provider", ""), "model": c.get("model", ""),
-                    "message_count": len(c.get("messages", []))})
-    out.sort(key=lambda x: x.get("updated", 0), reverse=True)
-    return jsonify({"chats": out})
-
-
-@app.route("/api/chats/<chat_id>", methods=["GET", "POST", "DELETE"])
-def api_chat_item(chat_id):
-    chats = load_chats()
-    if request.method == "GET":
-        c = chats.get(chat_id)
-        if not c: return _error_response(404, "Not found")
-        return jsonify({"chat": c})
-    if request.method == "DELETE":
-        if chat_id in chats:
-            del chats[chat_id]; save_chats(chats)
-        return jsonify({"ok": True})
-    payload = request.get_json(silent=True) or {}
-    chat = chats.get(chat_id) or {"id": chat_id, "messages": []}
-    for k in ("title", "provider", "model", "system", "messages", "system_preset", "temperature"):
-        if k in payload: chat[k] = payload[k]
-    chat["updated"] = int(time.time())
-    chats[chat_id] = chat
-    save_chats(chats)
-    return jsonify({"ok": True, "chat": chat})
-
-
- 
-@app.route("/api/chat", methods=["POST"])
-def api_chat():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    provider = str(p.get("provider") or "").strip()
-    model    = str(p.get("model") or "").strip()
-    stream   = bool(p.get("stream", True))
-    temp     = float(p.get("temperature", cfg.get("default_temperature", 0.7)) or 0.7)
-    messages = p.get("messages") if isinstance(p.get("messages"), list) else []
-    sys_prompt = p.get("system")
-    web_on   = bool(p.get("web_search", False))
-    sys_pre  = str(p.get("system_preset") or "")
-
-    if provider not in PROVIDERS: return _error_response(400, "Unknown provider")
-    if provider == "webgpu":
-        return _error_response(400, "WebGPU runs client-side. Use the Local AI tab.", error_type="bad_request")
-    if not model: return _error_response(400, "Model required")
-    if not _provider_is_configured(cfg, provider):
-        return _error_response(401, f"Provider '{provider}' not configured", error_type="auth")
-
-    if not sys_prompt:
-        sys_prompt = get_system_prompt_for_model(model, sys_pre)
-    else:
-        sys_prompt = str(sys_prompt)
-
-    if web_on and messages:
-        last_user = next((_flatten_content(m.get("content"))
-                          for m in reversed(messages) if m.get("role") == "user"), None)
-        if last_user:
-            results = web_search(last_user, int(cfg.get("web_search_results", 5)))
-            if results:
-                sys_prompt = (sys_prompt or "") + "\n\n" + format_search_context(results)
-
-    # ---- OpenAI-compatible providers ----
-    if provider in OPENAI_COMPAT_BASE:
-        key = "" if provider in FREE_PROVIDERS else _provider_key(cfg, provider)
-        url = f"{OPENAI_COMPAT_BASE[provider]}/chat/completions"
-        body = {"model": model,
-                "messages": _chat_messages_with_system(messages, sys_prompt),
-                "temperature": temp, "stream": stream}
-        # Perplexity expects max_tokens
-        if provider == "perplexity": body["max_tokens"] = 4096
-        headers = _headers_for_provider(provider, key, cfg)
-        if stream:
-            return Response(_openai_compat_stream(url, headers, body, provider, model),
-                            mimetype="text/event-stream")
-        text, err = _openai_compat_once(url, headers, {**body, "stream": False})
-        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
-        return jsonify({"text": text or ""})
-
-    # ---- Anthropic ----
-    if provider == "anthropic":
-        if stream:
-            return Response(_anthropic_chat_stream(cfg, model, messages, sys_prompt, temp),
-                            mimetype="text/event-stream")
-        parts = []
-        for chunk in _anthropic_chat_stream(cfg, model, messages, sys_prompt, temp):
-            if chunk.startswith("data: ") and chunk[6:].strip() not in ("[DONE]", ""):
-                try:
-                    j = json.loads(chunk[6:].strip())
-                    if j.get("delta"): parts.append(j["delta"])
-                except Exception: pass
-        return jsonify({"text": "".join(parts)})
-
-    # ---- Google ----
-    if provider == "google":
-        text, err = _google_chat_once(cfg, model, messages, sys_prompt, temp)
-        if stream:
-            return Response(_pseudo_stream(text, err), mimetype="text/event-stream")
-        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
-        return jsonify({"text": text or ""})
-
-    # ---- Cohere ----
-    if provider == "cohere":
-        if stream:
-            return Response(_cohere_chat_stream(cfg, model, messages, sys_prompt, temp),
-                            mimetype="text/event-stream")
-        parts = []
-        for chunk in _cohere_chat_stream(cfg, model, messages, sys_prompt, temp):
-            if chunk.startswith("data: ") and chunk[6:].strip() not in ("[DONE]", ""):
-                try:
-                    j = json.loads(chunk[6:].strip())
-                    if j.get("delta"): parts.append(j["delta"])
-                except Exception: pass
-        return jsonify({"text": "".join(parts)})
-
-    # ---- Cloudflare WorkersAI ----
-    if provider == "cloudflare":
-        text, err = _cloudflare_chat_once(cfg, model, messages, sys_prompt, temp)
-        if stream:
-            return Response(_pseudo_stream(text, err), mimetype="text/event-stream")
-        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
-        return jsonify({"text": text or ""})
-
-    # ---- Hugging Face router ----
-    if provider == "huggingface":
-        key = _provider_key(cfg, "huggingface")
-        prompt_parts = []
-        if sys_prompt: prompt_parts.append(f"System: {sys_prompt}")
-        for m in messages:
-            role = str(m.get("role") or "user").capitalize()
-            prompt_parts.append(f"{role}: {_flatten_content(m.get('content'))}")
-        prompt_parts.append("Assistant:")
-        body = {"inputs": "\n".join(prompt_parts),
-                "parameters": {"temperature": temp, "max_new_tokens": 2048,
-                               "return_full_text": False}}
-        try:
-            r = requests.post(f"https://router.huggingface.co/hf-inference/models/{model}",
-                              headers={"Authorization": f"Bearer {key}"}, json=body, timeout=180)
-            if not r.ok:
-                if stream:
-                    return Response(_pseudo_stream(None, (r.status_code, _extract_error_message(r.text))),
-                                    mimetype="text/event-stream")
-                return _error_response(r.status_code, _extract_error_message(r.text))
-            data = r.json()
-            text = data[0].get("generated_text", "") if isinstance(data, list) else data.get("generated_text", "")
-            if stream:
-                return Response(_pseudo_stream(text, (0, None)), mimetype="text/event-stream")
-            return jsonify({"text": text})
-        except Exception as e:
-            if stream:
-                return Response(_pseudo_stream(None, (502, str(e))), mimetype="text/event-stream")
-            return _error_response(502, str(e))
-
-    # ---- DuckDuckGo ----
-    if provider == "duckduckgo":
-        if stream:
-            return Response(_ddg_chat_stream(model, messages, sys_prompt or ""),
-                            mimetype="text/event-stream")
-        text, err = _ddg_chat_once(model, messages, sys_prompt or "")
-        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
-        return jsonify({"text": text or ""})
-
-    return _error_response(400, f"Provider '{provider}' chat not implemented")
-
-
 # ---------------------------------------------------------------------------
-# Image generation
-# ---------------------------------------------------------------------------
-def _extract_images_from_response_payload(payload):
-    
-    out = []
-    if not isinstance(payload, dict):
-        return out
-
-    
-    data_items = payload.get("data")
-    if isinstance(data_items, list):
-        for item in data_items:
-            if not isinstance(item, dict):
-                continue
-            b64 = item.get("b64_json")
-            if isinstance(b64, str) and b64.strip():
-                try:
-                    out.append(_save_generated_bytes("img", "png", base64.b64decode(b64)))
-                    continue
-                except Exception:
-                    pass
-            url = item.get("url")
-            if isinstance(url, str) and url.strip():
-                try:
-                    rr = requests.get(url, timeout=120)
-                    if rr.ok and rr.content:
-                        out.append(_save_generated_bytes("img", "png", rr.content))
-                except Exception:
-                    pass
-
-    
-    images = payload.get("images")
-    if isinstance(images, list):
-        for item in images:
-            if isinstance(item, str) and item.strip():
-                try:
-                    out.append(_save_generated_bytes("img", "png", base64.b64decode(item)))
-                except Exception:
-                    pass
-            elif isinstance(item, dict):
-                b64 = item.get("b64_json") or item.get("b64") or item.get("base64") or item.get("image")
-                if isinstance(b64, str) and b64.strip():
-                    try:
-                        out.append(_save_generated_bytes("img", "png", base64.b64decode(b64)))
-                    except Exception:
-                        pass
-
-    single = payload.get("image")
-    if isinstance(single, str) and single.strip():
-        try:
-            out.append(_save_generated_bytes("img", "png", base64.b64decode(single)))
-        except Exception:
-            pass
-
-    deduped = []
-    seen = set()
-    for u in out:
-        if u in seen:
-            continue
-        seen.add(u)
-        deduped.append(u)
-    return deduped
-
-
-def _generate_fireworks_image(model, prompt, w, h, n, negative, seed, key):
-    model_path = model or "accounts/fireworks/models/flux-1-schnell-fp8"
-    if not model_path.startswith("accounts/"):
-        model_path = f"accounts/fireworks/models/{model_path}"
-
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    first_err = None
-
-    # Preferred Fireworks workflow endpoint (non-OpenAI path).
-    workflow_body = {"prompt": prompt, "width": w, "height": h, "num_images": n}
-    if negative:
-        workflow_body["negative_prompt"] = negative
-    if seed is not None:
-        try:
-            workflow_body["seed"] = int(seed)
-        except Exception:
-            pass
-
-    workflow_urls = [
-        f"https://api.fireworks.ai/inference/v1/workflows/{model_path}/text_to_image",
-        f"https://api.fireworks.ai/v1/workflows/{model_path}/text_to_image",
-    ]
-    for url in workflow_urls:
-        try:
-            r = requests.post(url, headers=headers, json=workflow_body, timeout=180)
-            if r.ok:
-                ct = (r.headers.get("content-type") or "").lower()
-                
-                if ct.startswith("image") and r.content and n == 1:
-                    return [_save_generated_bytes("img", "png", r.content)], (0, "")
-                payload = r.json() if "json" in ct else {}
-                saved = _extract_images_from_response_payload(payload)
-                if saved:
-                    return saved, (0, "")
-                if first_err is None:
-                    first_err = (502, "Fireworks returned no images")
-            elif first_err is None:
-                first_err = (r.status_code, _extract_error_message(r.text))
-                
-                if r.status_code in (401, 402, 403, 429):
-                    return None, first_err
-        except requests.RequestException as e:
-            if first_err is None:
-                first_err = (503, f"Network: {e}")
-
-
-    compat_body = {
-        "model": model_path,
-        "prompt": prompt,
-        "n": n,
-        "width": w,
-        "height": h,
-        "response_format": "b64_json",
-    }
-    for base in ("https://api.fireworks.ai/inference/v1", "https://api.fireworks.ai/v1"):
-        try:
-            r = requests.post(f"{base}/images/generations", headers=headers, json=compat_body, timeout=180)
-            if not r.ok:
-                if first_err is None:
-                    first_err = (r.status_code, _extract_error_message(r.text))
-                continue
-            payload = r.json()
-            saved = _extract_images_from_response_payload(payload)
-            if saved:
-                return saved, (0, "")
-        except requests.RequestException as e:
-            if first_err is None:
-                first_err = (503, f"Network: {e}")
-
-    return None, first_err or (502, "Fireworks image generation failed")
-
-
-def _generate_image(provider, model, prompt, size, n, negative, seed, cfg, cfg_scale=None, steps=None, reference_image=None):
-    """Returns (urls, (status, msg)) — status 0 means OK."""
-    try:
-        # ---- Pollinations (free, keyless) ----
-        if provider == "pollinations":
-            model = model or "flux"
-            try: w, h = map(int, size.split("x"))
-            except Exception: w, h = 1024, 1024
-            saved, first_err = [], None
-            for i in range(n):
-                s = (int(seed) + i) if seed is not None else (int(time.time() * 1000) % 100000 + i)
-                url = (f"https://image.pollinations.ai/prompt/{urlquote(prompt)}"
-                       f"?model={urlquote(model)}&width={w}&height={h}&seed={s}&nologo=true")
-                try:
-                    r = requests.get(url, timeout=120)
-                    ct = (r.headers.get("content-type") or "").lower()
-                    if r.ok and r.content and ct.startswith("image"):
-                        ext = "jpg" if "jpeg" in ct else "png"
-                        saved.append(_save_generated_bytes("img", ext, r.content))
-                    elif first_err is None:
-                        first_err = (r.status_code, _extract_error_message(r.text) or "error")
-                except requests.RequestException as e:
-                    if first_err is None: first_err = (503, f"Network: {e}")
-            if saved: return saved, (0, "")
-            return None, first_err or (502, "Pollinations failed")
-
-        key = _provider_key(cfg, provider)
-        if not key:
-            return None, (401, f"No API key for {provider}")
-
-        # ---- HuggingFace Inference ----
-        if provider == "huggingface":
-            r = requests.post(f"https://router.huggingface.co/hf-inference/models/{model}",
-                              headers={"Authorization": f"Bearer {key}"},
-                              json={"inputs": prompt}, timeout=180)
-            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
-            return [_save_generated_bytes("img", "png", r.content)], (0, "")
-
-        # ---- Fireworks (native workflows endpoint; OpenAI path fallback) ----
-        if provider == "fireworks":
-            try: w, h = map(int, size.split("x"))
-            except Exception: w, h = 1024, 1024
-            return _generate_fireworks_image(model, prompt, w, h, n, negative, seed, key)
-
-        # ---- Together / OpenAI / NVIDIA / SiliconFlow / xAI (OpenAI-compat /images/generations) ----
-        if provider in ("together", "openai", "nvidia_nim", "siliconflow", "xai"):
-            base = OPENAI_COMPAT_BASE.get(provider) or "https://api.openai.com/v1"
-            try: w, h = map(int, size.split("x"))
-            except Exception: w, h = 1024, 1024
-            body = {"model": model, "prompt": prompt, "n": n}
-            if provider in ("together", "siliconflow"):
-                body["width"] = w; body["height"] = h
-                body["response_format"] = "b64_json"
-            else:
-                body["size"] = f"{w}x{h}"
-            r = requests.post(f"{base}/images/generations",
-                              headers={"Authorization": f"Bearer {key}",
-                                       "Content-Type": "application/json"},
-                              json=body, timeout=180)
-            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
-            data = r.json().get("data", [])
-            saved = []
-            for d in data:
-                if d.get("b64_json"):
-                    saved.append(_save_generated_bytes("img", "png", base64.b64decode(d["b64_json"])))
-                elif d.get("url"):
-                    try:
-                        rr = requests.get(d["url"], timeout=120)
-                        if rr.ok: saved.append(_save_generated_bytes("img", "png", rr.content))
-                    except Exception: pass
-            return (saved, (0, "")) if saved else (None, (502, "No images returned"))
-
-        # ---- Cloudflare ----
-        if provider == "cloudflare":
-            account_id = (cfg.get("provider_config", {}).get("cloudflare", {}) or {}).get("account_id", "")
-            if not account_id: return None, (400, "Cloudflare account_id required")
-            try: w, h = map(int, size.split("x"))
-            except Exception: w, h = 1024, 1024
-            r = requests.post(f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
-                              headers={"Authorization": f"Bearer {key}"},
-                              json={"prompt": prompt, "width": w, "height": h}, timeout=180)
-            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
-            return [_save_generated_bytes("img", "png", r.content)], (0, "")
-
-        # ---- Replicate (model = "owner/name" or "owner/name:version") ----
-        if provider == "replicate":
-            slug = model
-            try: w, h = map(int, size.split("x"))
-            except Exception: w, h = 1024, 1024
-            inputs = {"prompt": prompt, "width": w, "height": h, "num_outputs": n}
-            if negative: inputs["negative_prompt"] = negative
-            if seed is not None:
-                try: inputs["seed"] = int(seed)
-                except Exception: pass
-            url = f"https://api.replicate.com/v1/models/{slug}/predictions"
-            r = requests.post(url,
-                              headers={"Authorization": f"Bearer {key}",
-                                       "Content-Type": "application/json",
-                                       "Prefer": "wait"},
-                              json={"input": inputs}, timeout=300)
-            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
-            j = r.json()
-            output = j.get("output")
-            urls = [output] if isinstance(output, str) else (output or [])
-            saved = []
-            for u in urls[:n]:
-                try:
-                    rr = requests.get(u, timeout=120)
-                    if rr.ok: saved.append(_save_generated_bytes("img", "png", rr.content))
-                except Exception: pass
-            return (saved, (0, "")) if saved else (None, (502, "No images returned"))
-
-        # ---- Stability AI ----
-        if provider == "stability":
-            slug = (model or "stable-image-core").lower()
-            if slug in ("stable-image-ultra", "stable-image-core"):
-                endpoint = f"https://api.stability.ai/v2beta/stable-image/generate/{slug.split('-')[-1]}"
-            else:
-                endpoint = f"https://api.stability.ai/v2beta/stable-image/generate/{slug}"
-            files = {"prompt": (None, prompt), "output_format": (None, "png")}
-            if negative: files["negative_prompt"] = (None, negative)
-            if seed is not None: files["seed"] = (None, str(int(seed)))
-            r = requests.post(endpoint,
-                              headers={"Authorization": f"Bearer {key}", "Accept": "image/*"},
-                              files=files, timeout=180)
-            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
-            return [_save_generated_bytes("img", "png", r.content)], (0, "")
-
-        return None, (400, f"Image not implemented for {provider}")
-
-    except Exception as e:
-        traceback.print_exc()
-        return None, (502, str(e))
-
-
-@app.route("/api/image", methods=["POST"])
-def api_image():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    provider = str(p.get("provider") or cfg.get("default_image_provider") or "pollinations")
-    model    = str(p.get("model") or "")
-    prompt   = str(p.get("prompt") or "").strip()
-    size     = str(p.get("size") or "1024x1024")
-    n        = max(1, min(int(p.get("n", 1) or 1), 5))
-    negative = str(p.get("negative") or "")
-    seed     = p.get("seed")
-    cfg_scale = p.get("cfg")
-    steps = p.get("steps")
-    reference_image = p.get("reference_image")
-
-    if not prompt: return _error_response(400, "Prompt required")
-    if provider not in PROVIDERS: return _error_response(400, "Unknown provider")
-    if not _provider_is_configured(cfg, provider):
-        return _error_response(401, f"Provider '{provider}' not configured", error_type="auth")
-
-    urls, err = _generate_image(provider, model, prompt, size, n, negative, seed, cfg, cfg_scale=cfg_scale, steps=steps, reference_image=reference_image)
-    if err[0]:
-        return _error_response(err[0], err[1] or "Image generation failed",
-                               provider=provider, model=model)
-    return jsonify({"images": urls, "provider": provider, "model": model})
-
-
-def _score_image_model(provider, model_id):
-    """Score model by quality/speed. Higher is better. 0-100 scale."""
-    m = (model_id or "").lower()
-    p = (provider or "").lower()
-    
-    # Top tier: fast + quality (FLUX schnell variants, free/cheap)
-    if "flux" in m and "schnell" in m and p in ("together", "pollinations", "huggingface", "fireworks", "cloudflare", "siliconflow"):
-        return 95
-    if "flux" in m and "schnell" in m and p in ("replicate",):
-        return 90
-    
-    # High tier: slower but better quality (FLUX dev, pro)
-    if "flux" in m and ("dev" in m or "1.1-pro" in m or "pro" in m):
-        return 85
-    
-    # Mid tier: fast (turbo, playground, turbo)
-    if "turbo" in m or "playground" in m or "schnell" in m:
-        return 70
-    
-    # Mid-low: stable diffusion 3.5
-    if "sd3.5" in m or "stable-diffusion-3.5" in m:
-        return 65
-    
-    # Lower: SDXL, older models
-    if "sdxl" in m or "sd3" in m and "3.5" not in m:
-        return 50
-    
-    # Specialty: recraft, ideogram, etc (good but niche)
-    if "recraft" in m or "ideogram" in m:
-        return 60
-    
-    # Default/unknown
-    return 40
-
-
-def _get_all_image_models(cfg):
-    """Collect all available image models across all providers, ranked by quality."""
-    models_with_score = []
-    
-    for provider_id in PROVIDER_IDS:
-        if provider_id not in STATIC_MODELS:
-            continue
-        
-        models = STATIC_MODELS[provider_id].get("image", [])
-        if not models:
-            continue
-        
-        # Check if provider is available
-        is_free = provider_id in FREE_PROVIDERS
-        is_configured = is_free or _provider_is_configured(cfg, provider_id)
-        if not is_configured:
-            continue
-        
-        for model_id in models:
-            score = _score_image_model(provider_id, model_id)
-            models_with_score.append((score, provider_id, model_id))
-    
-    # Sort by score descending (best first), then by provider for stability
-    models_with_score.sort(key=lambda x: (-x[0], x[1], x[2]))
-    return [(prov, mdl) for _, prov, mdl in models_with_score]
-
-
-def _filter_models_by_keyword(all_models, keyword):
-    """Filter model list to only those matching keyword."""
-    if not keyword:
-        return all_models
-    
-    keyword = keyword.lower().strip()
-    filtered = []
-    for prov, mdl in all_models:
-        m = (mdl or "").lower()
-        if keyword in m or (keyword == "flux" and "flux" in m) or \
-           (keyword == "sdxl" and "sdxl" in m) or \
-           (keyword == "turbo" and "turbo" in m) or \
-           (keyword == "playground" and "playground" in m) or \
-           (keyword == "stable" and ("stable-diffusion" in m or "stable-image" in m)):
-            filtered.append((prov, mdl))
-    
-    return filtered if filtered else all_models  # fallback to all if no match
-
-
-@app.route("/api/chat-image", methods=["POST"])
-def api_chat_image():
-    """Chat-side /image command: enhance prompt, pick best model, generate."""
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    prompt = str(p.get("prompt") or "").strip()
-    size = str(p.get("size") or "1024x1024")
-    n = int(p.get("n") or 1)
-    n = max(1, min(n, 5))
-    user_model = str(p.get("model") or "").strip()
-    
-    if not prompt: return _error_response(400, "Prompt required")
-
-    # Try to enhance the prompt (skip on any error, including content filtering)
-    enhanced_prompt = prompt
-    try:
-        body = {"model": "openai-fast",
-                "messages": [{"role": "system", "content": SYSTEM_PROMPTS.get("image_prompt", "")},
-                             {"role": "user", "content": prompt}],
-                "temperature": 0.7}
-        text, err = _openai_compat_once("https://text.pollinations.ai/openai/chat/completions",
-                                        {"Content-Type": "application/json"}, body)
-        # Only use enhanced prompt if it's valid; ignore any errors including content filters
-        if err[0] == 0 and text and len(text.strip()) > 2:
-            enhanced_prompt = (text or prompt).strip().strip('"')
-    except Exception:
-        pass  # fallback to original prompt
-
-    # Get all available image models ranked by quality
-    all_models = _get_all_image_models(cfg)
-    if not all_models:
-        return _error_response(400, "No image models available")
-    
-    # Filter by keyword if user specified a model
-    candidates = _filter_models_by_keyword(all_models, user_model)
-
-    def _is_fatal_error(status_code):
-        """Auth/config errors are fatal (skip provider); transient errors should retry."""
-        return status_code in (401, 402, 403)  # auth/payment/forbidden
-    
-    def _is_retryable_error(status_code):
-        """Network/server/rate errors warrant trying the next provider."""
-        return status_code in (429, 500, 502, 503) or status_code == 0  # rate-limit, server issues, or network
-
-    last_err = None
-    last_fatal_err = None
-    tried_count = 0
-    
-    for prov, mdl in candidates:
-        tried_count += 1
-        try:
-            urls, err = _generate_image(prov, mdl, enhanced_prompt, size, n, "", None, cfg)
-            if err[0] == 0 and urls:
-                return jsonify({"images": urls, "provider": prov, "model": mdl, "count": len(urls), "requested": n, "prompt": enhanced_prompt})
-            
-            # Categorize the error
-            if _is_fatal_error(err[0]):
-                # Auth/config error: track it but continue to next provider
-                last_fatal_err = err
-                continue
-            elif _is_retryable_error(err[0]):
-                # Transient error: continue to next provider
-                last_err = err
-                continue
-            else:
-                # Other error (4xx client error, etc): still try next provider
-                last_err = err
-                continue
-        except Exception as e:
-            # Network or runtime error: continue to next provider
-            last_err = (502, f"Provider error: {str(e)[:100]}")
-            continue
-    
-    # All providers tried. Return the most appropriate error:
-    # Prefer a retryable/transient error if we have one (shows it's a real attempt)
-    # Otherwise use fatal error, otherwise generic
-    if last_err:
-        return _error_response(last_err[0], last_err[1])
-    if last_fatal_err:
-        return _error_response(last_fatal_err[0], last_fatal_err[1])
-    if tried_count == 0:
-        return _error_response(400, "No available providers")
-    return _error_response(502, "All providers failed to generate images")
-
-
-@app.route("/api/enhance-prompt", methods=["POST"])
-def api_enhance_prompt():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    prompt = str(p.get("prompt") or "").strip()
-    if not prompt: return _error_response(400, "Prompt required")
-    body = {"model": "openai-fast",
-            "messages": [{"role": "system", "content": SYSTEM_PROMPTS["image_prompt"]},
-                         {"role": "user", "content": prompt}],
-            "temperature": 0.7}
-    text, err = _openai_compat_once("https://text.pollinations.ai/openai/chat/completions",
-                                    {"Content-Type": "application/json"}, body)
-    if err[0]: return _error_response(err[0], err[1] or "Error")
-    return jsonify({"prompt": (text or prompt).strip().strip('"')})
-
-
-# ---------------------------------------------------------------------------
-# TTS / STT / Translate
-# ---------------------------------------------------------------------------
-@app.route("/api/tts", methods=["POST"])
-def api_tts():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    provider = str(p.get("provider") or "pollinations")
-    model    = str(p.get("model") or "openai-audio")
-    voice    = str(p.get("voice") or "alloy")
-    text     = str(p.get("text") or "").strip()
-    if not text: return _error_response(400, "Text required")
-
-    def _openai_tts_call():
-        key = _provider_key(cfg, "openai")
-        if not key:
-            return None, (401, "OpenAI key required")
-        use_model = model if provider == "openai" else "gpt-4o-mini-tts"
-        try:
-            r = requests.post("https://api.openai.com/v1/audio/speech",
-                              headers={"Authorization": f"Bearer {key}",
-                                       "Content-Type": "application/json"},
-                              json={"model": use_model, "voice": voice, "input": text},
-                              timeout=180)
-            if not r.ok:
-                return None, (r.status_code, _extract_error_message(r.text))
-            return _save_generated_bytes("tts", "mp3", r.content), (0, "")
-        except requests.RequestException as e:
-            return None, (503, f"Network: {e}")
-
-    if provider == "pollinations":
-        url = (f"https://text.pollinations.ai/{urlquote(text)}"
-               f"?model=openai-audio&voice={urlquote(voice)}")
-        try:
-            r = requests.get(url, timeout=180)
-            ct = (r.headers.get("content-type") or "").lower()
-            if r.ok and r.content and ("audio" in ct or "mpeg" in ct or "mp3" in ct):
-                return jsonify({"url": _save_generated_bytes("tts", "mp3", r.content)})
-
-            # Pollinations can occasionally return upstream HTML/JSON errors.
-            # If OpenAI is configured, fallback automatically for resilience.
-            if r.status_code >= 500 and _provider_key(cfg, "openai"):
-                out, err = _openai_tts_call()
-                if err[0] == 0:
-                    return jsonify({"url": out})
-            return _error_response(r.status_code or 502, _extract_error_message(r.text))
-        except requests.RequestException:
-            if _provider_key(cfg, "openai"):
-                out, err = _openai_tts_call()
-                if err[0] == 0:
-                    return jsonify({"url": out})
-                return _error_response(err[0], err[1])
-            return _error_response(502, "Pollinations TTS request failed")
-
-    if provider == "openai":
-        out, err = _openai_tts_call()
-        if err[0]:
-            return _error_response(err[0], err[1])
-        return jsonify({"url": out})
-
-    if provider == "elevenlabs":
-        key = _provider_key(cfg, "elevenlabs")
-        if not key: return _error_response(401, "ElevenLabs key required")
-        voice_id = voice or "EXAVITQu4vr4xnSDxMaL"  # 'Bella'
-        try:
-            r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-                              headers={"xi-api-key": key, "Content-Type": "application/json",
-                                       "Accept": "audio/mpeg"},
-                              json={"text": text, "model_id": model,
-                                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}},
-                              timeout=180)
-            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
-            return jsonify({"url": _save_generated_bytes("tts", "mp3", r.content)})
-        except Exception as e:
-            return _error_response(502, str(e))
-
-    return _error_response(400, f"TTS not implemented for {provider}")
-
-
-@app.route("/api/stt", methods=["POST"])
-def api_stt():
-    cfg = load_config()
-    if "audio" not in request.files: return _error_response(400, "audio file required")
-    audio = request.files["audio"]
-    provider = request.form.get("provider", "groq")
-    model    = request.form.get("model", "whisper-large-v3-turbo")
-
-    if provider == "groq":
-        key = _provider_key(cfg, "groq")
-        if not key: return _error_response(401, "Groq key required")
-        try:
-            r = requests.post("https://api.groq.com/openai/v1/audio/transcriptions",
-                              headers={"Authorization": f"Bearer {key}"},
-                              files={"file": (audio.filename or "audio.mp3", audio.stream, audio.mimetype or "audio/mpeg")},
-                              data={"model": model, "response_format": "json"},
-                              timeout=180)
-            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
-            return jsonify({"text": r.json().get("text", "")})
-        except Exception as e:
-            return _error_response(502, str(e))
-
-    if provider == "openai":
-        key = _provider_key(cfg, "openai")
-        if not key: return _error_response(401, "OpenAI key required")
-        try:
-            r = requests.post("https://api.openai.com/v1/audio/transcriptions",
-                              headers={"Authorization": f"Bearer {key}"},
-                              files={"file": (audio.filename or "audio.mp3", audio.stream, audio.mimetype or "audio/mpeg")},
-                              data={"model": model},
-                              timeout=180)
-            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
-            return jsonify({"text": r.json().get("text", "")})
-        except Exception as e:
-            return _error_response(502, str(e))
-
-    if provider == "elevenlabs":
-        key = _provider_key(cfg, "elevenlabs")
-        if not key: return _error_response(401, "ElevenLabs key required")
-        try:
-            r = requests.post("https://api.elevenlabs.io/v1/speech-to-text",
-                              headers={"xi-api-key": key},
-                              files={"file": (audio.filename or "audio.mp3", audio.stream, audio.mimetype or "audio/mpeg")},
-                              data={"model_id": model},
-                              timeout=180)
-            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
-            return jsonify({"text": r.json().get("text", "")})
-        except Exception as e:
-            return _error_response(502, str(e))
-
-    return _error_response(400, f"STT not implemented for {provider}")
-
-
-@app.route("/api/translate", methods=["POST"])
-def api_translate():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    text = str(p.get("text") or "").strip()
-    target = str(p.get("target_lang") or "EN").upper()
-    source = str(p.get("source_lang") or "").upper()
-    if not text: return _error_response(400, "text required")
-    key = _provider_key(cfg, "deepl")
-    if not key: return _error_response(401, "DeepL key required")
-    plan = (cfg.get("provider_config", {}).get("deepl", {}) or {}).get("plan", "free")
-    base = "https://api-free.deepl.com" if plan == "free" else "https://api.deepl.com"
-    data = {"text": text, "target_lang": target}
-    if source: data["source_lang"] = source
-    try:
-        r = requests.post(f"{base}/v2/translate",
-                          headers={"Authorization": f"DeepL-Auth-Key {key}"},
-                          data=data, timeout=60)
-        if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
-        translations = r.json().get("translations") or []
-        return jsonify({"text": translations[0].get("text", "") if translations else "",
-                        "detected_source_language": translations[0].get("detected_source_language", "") if translations else ""})
-    except Exception as e:
-        return _error_response(502, str(e))
-
-
-# ---------------------------------------------------------------------------
-# Voices
-# ---------------------------------------------------------------------------
-@app.route("/api/pollinations/voices", methods=["GET"])
-def api_pollinations_voices():
-    return jsonify({"voices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer",
-                               "coral", "sage", "ash", "verse", "ballad"]})
-
-
-@app.route("/api/openai/voices", methods=["GET"])
-def api_openai_voices():
-    return jsonify({"voices": ["alloy", "ash", "ballad", "coral", "echo", "fable",
-                               "onyx", "nova", "sage", "shimmer", "verse"]})
-
-
-@app.route("/api/elevenlabs/voices", methods=["GET"])
-def api_eleven_voices():
-    cfg = load_config()
-    key = _provider_key(cfg, "elevenlabs")
-    if not key:
-        return jsonify({"voices": [
-            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella"},
-            {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel"},
-            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam"},
-        ]})
-    try:
-        r = requests.get("https://api.elevenlabs.io/v1/voices",
-                         headers={"xi-api-key": key}, timeout=15)
-        if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
-        return jsonify({"voices": [{"id": v.get("voice_id"), "name": v.get("name")}
-                                   for v in (r.json().get("voices") or [])]})
-    except Exception as e:
-        return _error_response(502, str(e))
-
-
-# ---------------------------------------------------------------------------
-# Agent
+# Agent executor (stateless, no filesystem access — web + fetch only)
 # ---------------------------------------------------------------------------
 AGENT_TOOLS_SCHEMA = [
     {"type": "function", "function": {
-        "name": "shell",
-        "description": "Run a shell command in the workspace and stream its output.",
-        "parameters": {"type": "object",
-            "properties": {"cmd": {"type": "string"},
-                           "timeout": {"type": "integer", "default": 60}},
-            "required": ["cmd"]}}},
-    {"type": "function", "function": {
-        "name": "view_dir",
-        "description": "List the workspace tree.",
-        "parameters": {"type": "object",
-            "properties": {"path": {"type": "string", "default": "."},
-                           "depth": {"type": "integer", "default": 2}}}}},
-    {"type": "function", "function": {
-        "name": "read_file",
-        "description": "Read a file by lines.",
-        "parameters": {"type": "object",
-            "properties": {"path": {"type": "string"},
-                           "offset": {"type": "integer", "default": 1},
-                           "limit": {"type": "integer", "default": 300}},
-            "required": ["path"]}}},
-    {"type": "function", "function": {
-        "name": "write_file",
-        "description": "Create or overwrite a file with content.",
-        "parameters": {"type": "object",
-            "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-            "required": ["path", "content"]}}},
-    {"type": "function", "function": {
-        "name": "edit_file",
-        "description": "Replace exactly one occurrence of old_str with new_str in a file.",
-        "parameters": {"type": "object",
-            "properties": {"path": {"type": "string"},
-                           "old_str": {"type": "string"},
-                           "new_str": {"type": "string"}},
-            "required": ["path", "old_str", "new_str"]}}},
-    {"type": "function", "function": {
-        "name": "grep",
-        "description": "Search files for a regex pattern.",
-        "parameters": {"type": "object",
-            "properties": {"pattern": {"type": "string"},
-                           "path": {"type": "string", "default": "."},
-                           "glob": {"type": "string", "default": ""}},
-            "required": ["pattern"]}}},
-    {"type": "function", "function": {
-        "name": "find",
-        "description": "Find files by glob.",
-        "parameters": {"type": "object",
-            "properties": {"glob": {"type": "string"},
-                           "path": {"type": "string", "default": "."}},
-            "required": ["glob"]}}},
-    {"type": "function", "function": {
         "name": "web_search",
-        "description": "Search the web for up-to-date info.",
+        "description": "Search the web for up-to-date information.",
         "parameters": {"type": "object",
             "properties": {"query": {"type": "string"}},
             "required": ["query"]}}},
@@ -2339,7 +1371,7 @@ AGENT_TOOLS_SCHEMA = [
             "required": ["url"]}}},
     {"type": "function", "function": {
         "name": "finish",
-        "description": "Mark the task as complete with a one-paragraph summary.",
+        "description": "Mark the task as complete with a summary.",
         "parameters": {"type": "object",
             "properties": {"summary": {"type": "string"}},
             "required": ["summary"]}}},
@@ -2356,168 +1388,23 @@ def _agent_tool_text_description():
     return "\n".join(lines)
 
 
-def _build_tree(root, depth, prefix=""):
-    out = []
-    if depth < 0: return out
-    try:
-        entries = sorted(root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
-    except Exception:
-        return [f"{prefix}[error reading {root}]"]
-    skip = {"__pycache__", "node_modules", ".git", ".venv", "venv",
-            ".mypy_cache", ".pytest_cache", "dist", "build", ".next", ".cache"}
-    entries = [e for e in entries if e.name not in skip]
-    for i, child in enumerate(entries[:60]):
-        is_last = (i == len(entries[:60]) - 1)
-        connector = "└── " if is_last else "├── "
-        out.append(f"{prefix}{connector}{child.name}{'/' if child.is_dir() else ''}")
-        if child.is_dir() and depth > 0:
-            ext = "    " if is_last else "│   "
-            out.extend(_build_tree(child, depth - 1, prefix + ext))
-    if len(entries) > 60:
-        out.append(f"{prefix}... {len(entries) - 60} more items")
-    return out
-
-
 class AgentExecutor:
-    def __init__(self, cfg, cancel_event):
-        self.cfg = cfg
+    def __init__(self, cancel_event):
         self.cancel_event = cancel_event
 
     def run_tool(self, name, args):
         try:
-            if name == "shell":      yield from self._shell(args)
-            elif name == "view_dir": yield {"result": self._view_dir(args)}
-            elif name == "read_file":yield {"result": self._read_file(args)}
-            elif name == "write_file":yield {"result": self._write_file(args)}
-            elif name == "edit_file":yield {"result": self._edit_file(args)}
-            elif name == "grep":     yield {"result": self._grep(args)}
-            elif name == "find":     yield {"result": self._find(args)}
-            elif name == "web_search":yield {"result": self._web_search(args)}
-            elif name == "fetch_url":yield {"result": self._fetch_url(args)}
-            else: yield {"result": f"Unknown tool: {name}"}
-        except PermissionError as e:
-            yield {"result": f"Error: {e}"}
+            if name == "web_search":  yield {"result": self._web_search(args)}
+            elif name == "fetch_url": yield {"result": self._fetch_url(args)}
+            else: yield {"result": f"Tool '{name}' is not available in the serverless environment."}
         except Exception as e:
             yield {"result": f"Error: {type(e).__name__}: {e}"}
-
-    def _shell(self, args):
-        cmd = str(args.get("cmd", "")).strip()
-        timeout = min(max(int(args.get("timeout", 60) or 60), 1), 300)
-        if not cmd:
-            yield {"result": "Error: empty command"}; return
-        cwd = str(_workspace_root(self.cfg))
-        popen_args = dict(shell=True) if IS_WINDOWS else dict(shell=True, executable="/bin/bash")
-        try:
-            proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, bufsize=1, **popen_args)
-        except Exception as e:
-            yield {"result": f"Error: {e}"}; return
-        out_lines, t_start = [], time.time()
-        try:
-            while True:
-                if self.cancel_event.is_set():
-                    proc.kill(); yield {"stdout": "\n[cancelled]\n"}; out_lines.append("[cancelled]"); break
-                if time.time() - t_start > timeout:
-                    proc.kill(); yield {"stdout": f"\n[timeout {timeout}s]\n"}; out_lines.append(f"[timeout {timeout}s]"); break
-                line = proc.stdout.readline()
-                if not line:
-                    if proc.poll() is not None: break
-                    time.sleep(0.02); continue
-                yield {"stdout": line}
-                out_lines.append(line.rstrip("\n"))
-                if len(out_lines) > 2000: out_lines = out_lines[-2000:]
-            proc.wait(timeout=5)
-        except Exception as e:
-            yield {"stdout": f"\n[error: {e}]\n"}
-        rc = proc.returncode if proc.returncode is not None else -1
-        summary = "\n".join(out_lines[-500:])
-        yield {"result": f"(exit {rc})\n{summary}" if summary else f"(exit {rc})"}
-
-    def _view_dir(self, args):
-        path = str(args.get("path", "."))
-        depth = min(max(int(args.get("depth", 2) or 2), 1), 4)
-        target = _resolve_workspace_path(path, self.cfg)
-        if not target.exists(): return f"Error: {path} does not exist"
-        if not target.is_dir(): return f"Error: {path} is not a directory"
-        return "\n".join([f"{target.name or target}/"] + _build_tree(target, depth - 1))
-
-    def _read_file(self, args):
-        path = str(args.get("path", ""))
-        offset = max(1, int(args.get("offset", 1) or 1))
-        limit = min(max(int(args.get("limit", 300) or 300), 1), 2000)
-        target = _resolve_workspace_path(path, self.cfg)
-        if not target.exists() or not target.is_file(): return f"Error: {path} not found"
-        try: raw = target.read_text("utf-8", errors="replace")
-        except Exception as e: return f"Error reading {path}: {e}"
-        lines = raw.splitlines()
-        slc = lines[offset - 1: offset - 1 + limit]
-        w = len(str(offset + len(slc)))
-        nbr = "\n".join(f"{str(i).rjust(w)}  {ln}" for i, ln in enumerate(slc, start=offset))
-        tail = f"\n... ({len(lines) - offset - len(slc) + 1} more lines)" if offset - 1 + len(slc) < len(lines) else ""
-        return f"--- {path} (lines {offset}-{offset + len(slc) - 1} of {len(lines)}) ---\n{nbr}{tail}"
-
-    def _write_file(self, args):
-        path = str(args.get("path", "")); content = str(args.get("content", ""))
-        if not path: return "Error: path required"
-        target = _resolve_workspace_path(path, self.cfg)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return f"Wrote {len(content)} bytes to {path}"
-
-    def _edit_file(self, args):
-        path = str(args.get("path", "")); old = str(args.get("old_str", "")); new = str(args.get("new_str", ""))
-        if not path: return "Error: path required"
-        if not old: return "Error: old_str cannot be empty (use write_file for new files)"
-        target = _resolve_workspace_path(path, self.cfg)
-        if not target.exists(): return f"Error: {path} not found"
-        raw = target.read_text("utf-8", errors="replace")
-        cnt = raw.count(old)
-        if cnt == 0: return f"Error: old_str not found in {path}."
-        if cnt > 1:  return f"Error: old_str appears {cnt} times in {path}. Add more context."
-        target.write_text(raw.replace(old, new, 1), encoding="utf-8")
-        return f"Edited {path}: replaced 1 occurrence"
-
-    def _grep(self, args):
-        pattern = str(args.get("pattern", "")); path = str(args.get("path", ".")); glob = str(args.get("glob", ""))
-        if not pattern: return "Error: pattern required"
-        try: rx = re.compile(pattern)
-        except re.error as e: return f"Error: invalid regex: {e}"
-        root = _resolve_workspace_path(path, self.cfg)
-        if not root.exists(): return f"Error: {path} not found"
-        matches = []
-        files = [root] if root.is_file() else (list(root.rglob(glob)) if glob else [p for p in root.rglob("*") if p.is_file()])
-        skip = {"__pycache__", "node_modules", ".git", ".venv", "venv", "dist", "build"}
-        for f in files[:2000]:
-            if any(part in skip for part in f.parts): continue
-            if not f.is_file(): continue
-            if f.suffix in (".pyc", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp3", ".mp4", ".zip"): continue
-            try:
-                for i, line in enumerate(f.read_text("utf-8", errors="replace").splitlines(), 1):
-                    if rx.search(line):
-                        rel = f.relative_to(root).as_posix() if root.is_dir() else f.name
-                        matches.append(f"{rel}:{i}: {line[:300]}")
-                        if len(matches) >= 200: break
-            except Exception: continue
-            if len(matches) >= 200: break
-        return "\n".join(matches[:200]) + ("" if len(matches) < 200 else "\n... (truncated)") if matches else f"No matches for /{pattern}/"
-
-    def _find(self, args):
-        glob = str(args.get("glob", "")); path = str(args.get("path", "."))
-        if not glob: return "Error: glob required"
-        root = _resolve_workspace_path(path, self.cfg)
-        if not root.exists(): return f"Error: {path} not found"
-        skip = {"__pycache__", "node_modules", ".git", ".venv", "venv", "dist", "build"}
-        try: results = list(root.rglob(glob))
-        except Exception as e: return f"Error: {e}"
-        filtered = [p for p in results if not any(part in skip for part in p.parts)]
-        if not filtered: return f"No matches for {glob}"
-        rels = sorted([p.relative_to(root).as_posix() + ("/" if p.is_dir() else "") for p in filtered])
-        return "\n".join(rels[:200]) + ("" if len(rels) < 200 else "\n... (truncated)")
 
     def _web_search(self, args):
         results = web_search(str(args.get("query", "")), max_results=5)
         if not results: return "No results"
-        return "\n".join(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}" for i, r in enumerate(results, 1))
+        return "\n".join(f"{i}. {r['title']}\n   {r['snippet']}\n   {r['url']}"
+                         for i, r in enumerate(results, 1))
 
     def _fetch_url(self, args):
         url = str(args.get("url", ""))
@@ -2534,25 +1421,24 @@ class AgentExecutor:
             return f"Error: {e}"
 
 
-def _agent_call_model(provider, model, messages, use_native_tools, cfg):
+def _agent_call_model(provider, model, messages, use_native_tools, req_payload):
     try:
         body = {"model": model, "messages": messages, "temperature": 0.3, "stream": False}
         if use_native_tools:
             body["tools"] = AGENT_TOOLS_SCHEMA
             body["tool_choice"] = "auto"
-            body["parallel_tool_calls"] = True
 
         if provider == "webgpu":
-            # WebGPU runs client-side only; agent is server-side
             return {"error": _error_obj(400, "WebGPU is browser-only; use a server-side provider for agents",
                                         provider=provider, model=model)}
         elif provider == "pollinations":
             url = "https://text.pollinations.ai/openai/chat/completions"
-            headers = _headers_for_provider("pollinations", "", cfg)
+            headers = _headers_for_provider("pollinations", "", None)
         elif provider in OPENAI_COMPAT_BASE:
-            key = _provider_key(cfg, provider)
+            key = _req_key(req_payload, provider)
             url = f"{OPENAI_COMPAT_BASE[provider]}/chat/completions"
-            headers = _headers_for_provider(provider, key, cfg)
+            or_cfg = _req_provider_cfg(req_payload, "openrouter") if provider == "openrouter" else None
+            headers = _headers_for_provider(provider, key, or_cfg)
         else:
             return {"error": _error_obj(400, f"Agent provider '{provider}' not supported",
                                         provider=provider, model=model)}
@@ -2577,38 +1463,574 @@ def _agent_call_model(provider, model, messages, use_native_tools, cfg):
 def _parse_json_action_plan(text):
     if not text: return None
     s = text.strip()
-    # Remove fenced blocks
     fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", s)
     if fenced: s = fenced.group(1).strip()
-    # Find first JSON object
     first = s.find("{"); last = s.rfind("}")
     if first == -1 or last == -1: return None
     blob = s[first:last+1]
     try:
         j = json.loads(blob)
-    except Exception:
-        return None
+    except Exception: return None
     if isinstance(j, dict) and ("actions" in j or "tool" in j or "final" in j):
         return j
     return None
 
 
-@app.route("/api/agent/cancel/<run_id>", methods=["POST"])
+# ---------------------------------------------------------------------------
+# Flask routes
+# ---------------------------------------------------------------------------
+@app.after_request
+def add_cors_headers(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+    return resp
+
+
+@app.route("/", methods=["GET"])
+def index():
+    return send_from_directory(BASE_DIR, "index.html")
+
+
+@app.route("/<path:path>", methods=["GET"])
+def static_files(path):
+    target = BASE_DIR / path
+    if target.exists() and target.is_file():
+        return send_from_directory(BASE_DIR, path)
+    return send_from_directory(BASE_DIR, "index.html")
+
+
+# ---------------------------------------------------------------------------
+# /api/config  — returns static metadata only (no server-side keys)
+# ---------------------------------------------------------------------------
+@app.route("/api/config", methods=["GET", "OPTIONS"])
+def api_config():
+    if request.method == "OPTIONS":
+        return "", 204
+    # Client sends its own config; we just return static metadata
+    p = request.get_json(silent=True) or {}
+    return jsonify({
+        "providers": _providers_payload(p),
+        "system_prompts": SYSTEM_PROMPTS,
+        "vision_models": {k: list(v) for k, v in VISION_MODELS.items()},
+        "tool_models":   {k: list(v) for k, v in TOOL_CALL_MODELS.items()},
+        "uncensored_models": {k: list(v) for k, v in UNCENSORED_MODELS.items()},
+        "version": APP_VERSION,
+        "platform": "vercel",
+    })
+
+
+# ---------------------------------------------------------------------------
+# /api/providers/<provider>/models
+# ---------------------------------------------------------------------------
+@app.route("/api/providers/<provider>/models", methods=["GET", "POST", "OPTIONS"])
+def api_provider_models(provider):
+    if request.method == "OPTIONS": return "", 204
+    if provider not in PROVIDERS: return _error_response(404, "Unknown provider")
+    p = request.get_json(silent=True) or {}
+    meta = PROVIDERS[provider]
+    dynamic = []
+    if not meta.get("local") and provider not in FREE_PROVIDERS:
+        key = _req_key(p, provider)
+        if key:
+            try:
+                if provider == "anthropic":
+                    dynamic = _fetch_anthropic_models(key)
+                elif provider == "google":
+                    dynamic = _fetch_google_models(key)
+                elif provider == "cohere":
+                    dynamic = _fetch_cohere_models(key)
+                elif provider in OPENAI_COMPAT_BASE:
+                    or_cfg = _req_provider_cfg(p, "openrouter") if provider == "openrouter" else None
+                    dynamic = _fetch_openai_compat_models(provider, key, or_cfg)
+            except Exception as e:
+                print(f"[models] {provider}: {e}")
+    catalog = _merge_model_catalog(provider, dynamic)
+    return jsonify({"models": catalog,
+                    "vision": list(VISION_MODELS.get(provider, [])),
+                    "tools":  list(TOOL_CALL_MODELS.get(provider, [])),
+                    "uncensored": list(UNCENSORED_MODELS.get(provider, []))})
+
+
+# ---------------------------------------------------------------------------
+# /api/system-prompts
+# ---------------------------------------------------------------------------
+@app.route("/api/system-prompts", methods=["GET"])
+def api_system_prompts():
+    return jsonify({"prompts": SYSTEM_PROMPTS})
+
+
+# ---------------------------------------------------------------------------
+# /api/search
+# ---------------------------------------------------------------------------
+@app.route("/api/search", methods=["POST", "OPTIONS"])
+def api_search():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    return jsonify({"results": web_search(str(p.get("query") or ""),
+                                          max_results=int(p.get("max_results", 5) or 5))})
+
+
+# ---------------------------------------------------------------------------
+# /api/chat
+# ---------------------------------------------------------------------------
+@app.route("/api/chat", methods=["POST", "OPTIONS"])
+def api_chat():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    provider = str(p.get("provider") or "").strip()
+    model    = str(p.get("model") or "").strip()
+    stream   = bool(p.get("stream", True))
+    temp     = float(p.get("temperature", 0.7) or 0.7)
+    messages = p.get("messages") if isinstance(p.get("messages"), list) else []
+    sys_prompt = p.get("system")
+    web_on   = bool(p.get("web_search", False))
+    sys_pre  = str(p.get("system_preset") or "")
+
+    if provider not in PROVIDERS: return _error_response(400, "Unknown provider")
+    if provider == "webgpu":
+        return _error_response(400, "WebGPU runs client-side. Use the Local AI tab.", error_type="bad_request")
+    if not model: return _error_response(400, "Model required")
+    if not _provider_is_active(p, provider):
+        return _error_response(401, f"Provider '{provider}' not configured — add your API key in Settings", error_type="auth")
+
+    if not sys_prompt:
+        sys_prompt = get_system_prompt_for_model(model, sys_pre)
+    else:
+        sys_prompt = str(sys_prompt)
+
+    if web_on and messages:
+        last_user = next((_flatten_content(m.get("content"))
+                          for m in reversed(messages) if m.get("role") == "user"), None)
+        if last_user:
+            results = web_search(last_user, int(p.get("web_search_results", 5)))
+            if results:
+                sys_prompt = (sys_prompt or "") + "\n\n" + format_search_context(results)
+
+    # OpenAI-compatible providers
+    if provider in OPENAI_COMPAT_BASE:
+        key = "" if provider in FREE_PROVIDERS else _req_key(p, provider)
+        url = f"{OPENAI_COMPAT_BASE[provider]}/chat/completions"
+        body = {"model": model,
+                "messages": _chat_messages_with_system(messages, sys_prompt),
+                "temperature": temp, "stream": stream}
+        if provider == "perplexity": body["max_tokens"] = 4096
+        or_cfg = _req_provider_cfg(p, "openrouter") if provider == "openrouter" else None
+        headers = _headers_for_provider(provider, key, or_cfg)
+        if stream:
+            return Response(_openai_compat_stream(url, headers, body, provider, model),
+                            mimetype="text/event-stream")
+        text, err = _openai_compat_once(url, headers, {**body, "stream": False})
+        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
+        return jsonify({"text": text or ""})
+
+    if provider == "anthropic":
+        key = _req_key(p, provider)
+        if stream:
+            return Response(_anthropic_chat_stream(key, model, messages, sys_prompt, temp),
+                            mimetype="text/event-stream")
+        parts = []
+        for chunk in _anthropic_chat_stream(key, model, messages, sys_prompt, temp):
+            if chunk.startswith("data: ") and chunk[6:].strip() not in ("[DONE]", ""):
+                try:
+                    j = json.loads(chunk[6:].strip())
+                    if j.get("delta"): parts.append(j["delta"])
+                except Exception: pass
+        return jsonify({"text": "".join(parts)})
+
+    if provider == "google":
+        key = _req_key(p, provider)
+        text, err = _google_chat_once(key, model, messages, sys_prompt, temp)
+        if stream:
+            return Response(_pseudo_stream(text, err), mimetype="text/event-stream")
+        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
+        return jsonify({"text": text or ""})
+
+    if provider == "cohere":
+        key = _req_key(p, provider)
+        if stream:
+            return Response(_cohere_chat_stream(key, model, messages, sys_prompt, temp),
+                            mimetype="text/event-stream")
+        parts = []
+        for chunk in _cohere_chat_stream(key, model, messages, sys_prompt, temp):
+            if chunk.startswith("data: ") and chunk[6:].strip() not in ("[DONE]", ""):
+                try:
+                    j = json.loads(chunk[6:].strip())
+                    if j.get("delta"): parts.append(j["delta"])
+                except Exception: pass
+        return jsonify({"text": "".join(parts)})
+
+    if provider == "cloudflare":
+        key = _req_key(p, provider)
+        account_id = _req_provider_cfg(p, "cloudflare").get("account_id", "")
+        text, err = _cloudflare_chat_once(key, account_id, model, messages, sys_prompt, temp)
+        if stream:
+            return Response(_pseudo_stream(text, err), mimetype="text/event-stream")
+        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
+        return jsonify({"text": text or ""})
+
+    if provider == "huggingface":
+        key = _req_key(p, provider)
+        prompt_parts = []
+        if sys_prompt: prompt_parts.append(f"System: {sys_prompt}")
+        for m in messages:
+            role = str(m.get("role") or "user").capitalize()
+            prompt_parts.append(f"{role}: {_flatten_content(m.get('content'))}")
+        prompt_parts.append("Assistant:")
+        body = {"inputs": "\n".join(prompt_parts),
+                "parameters": {"temperature": temp, "max_new_tokens": 2048,
+                               "return_full_text": False}}
+        try:
+            r = requests.post(f"https://router.huggingface.co/hf-inference/models/{model}",
+                              headers={"Authorization": f"Bearer {key}"}, json=body, timeout=180)
+            if not r.ok:
+                if stream: return Response(_pseudo_stream(None, (r.status_code, _extract_error_message(r.text))),
+                                           mimetype="text/event-stream")
+                return _error_response(r.status_code, _extract_error_message(r.text))
+            data = r.json()
+            text = data[0].get("generated_text", "") if isinstance(data, list) else data.get("generated_text", "")
+            if stream: return Response(_pseudo_stream(text, (0, None)), mimetype="text/event-stream")
+            return jsonify({"text": text})
+        except Exception as e:
+            if stream: return Response(_pseudo_stream(None, (502, str(e))), mimetype="text/event-stream")
+            return _error_response(502, str(e))
+
+    if provider == "duckduckgo":
+        if stream:
+            return Response(_ddg_chat_stream(model, messages, sys_prompt or ""),
+                            mimetype="text/event-stream")
+        text, err = _ddg_chat_once(model, messages, sys_prompt or "")
+        if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
+        return jsonify({"text": text or ""})
+
+    return _error_response(400, f"Provider '{provider}' chat not implemented")
+
+
+# ---------------------------------------------------------------------------
+# /api/image  — returns data-URIs instead of saved file paths
+# ---------------------------------------------------------------------------
+@app.route("/api/image", methods=["POST", "OPTIONS"])
+def api_image():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    provider = str(p.get("provider") or "pollinations")
+    model    = str(p.get("model") or "")
+    prompt   = str(p.get("prompt") or "").strip()
+    size     = str(p.get("size") or "1024x1024")
+    n        = max(1, min(int(p.get("n", 1) or 1), 5))
+    negative = str(p.get("negative") or "")
+    seed     = p.get("seed")
+    cfg_scale = p.get("cfg")
+    steps    = p.get("steps")
+
+    if not prompt: return _error_response(400, "Prompt required")
+    if provider not in PROVIDERS: return _error_response(400, "Unknown provider")
+    if not _provider_is_active(p, provider):
+        return _error_response(401, f"Provider '{provider}' not configured", error_type="auth")
+
+    uris, err = _generate_image(provider, model, prompt, size, n, negative, seed, p,
+                                cfg_scale=cfg_scale, steps=steps)
+    if err[0]:
+        return _error_response(err[0], err[1] or "Image generation failed",
+                               provider=provider, model=model)
+    return jsonify({"images": uris, "provider": provider, "model": model})
+
+
+# ---------------------------------------------------------------------------
+# /api/chat-image  — auto-picks best model, returns data-URIs
+# ---------------------------------------------------------------------------
+@app.route("/api/chat-image", methods=["POST", "OPTIONS"])
+def api_chat_image():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    prompt = str(p.get("prompt") or "").strip()
+    size   = str(p.get("size") or "1024x1024")
+    n      = max(1, min(int(p.get("n") or 1), 5))
+    user_model = str(p.get("model") or "").strip()
+
+    if not prompt: return _error_response(400, "Prompt required")
+
+    # Try to enhance prompt via Pollinations (free, no key)
+    enhanced_prompt = prompt
+    try:
+        body = {"model": "openai-fast",
+                "messages": [{"role": "system", "content": SYSTEM_PROMPTS.get("image_prompt", "")},
+                             {"role": "user", "content": prompt}],
+                "temperature": 0.7}
+        text, err = _openai_compat_once("https://text.pollinations.ai/openai/chat/completions",
+                                        {"Content-Type": "application/json"}, body)
+        if err[0] == 0 and text and len(text.strip()) > 2:
+            enhanced_prompt = (text or prompt).strip().strip('"')
+    except Exception:
+        pass
+
+    all_models = _get_all_image_models(p)
+    if not all_models:
+        return _error_response(400, "No image models available")
+
+    # Filter by keyword if user specified
+    if user_model:
+        kw = user_model.lower().strip()
+        filtered = [(prov, mdl) for prov, mdl in all_models if kw in (mdl or "").lower()]
+        if filtered: all_models = filtered
+
+    last_err = None
+    for prov, mdl in all_models:
+        try:
+            uris, err = _generate_image(prov, mdl, enhanced_prompt, size, n, "", None, p)
+            if err[0] == 0 and uris:
+                return jsonify({"images": uris, "provider": prov, "model": mdl,
+                                "count": len(uris), "requested": n, "prompt": enhanced_prompt})
+            last_err = err
+        except Exception as e:
+            last_err = (502, str(e))
+
+    if last_err:
+        return _error_response(last_err[0], last_err[1])
+    return _error_response(502, "All image providers failed")
+
+
+# ---------------------------------------------------------------------------
+# /api/enhance-prompt
+# ---------------------------------------------------------------------------
+@app.route("/api/enhance-prompt", methods=["POST", "OPTIONS"])
+def api_enhance_prompt():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    prompt = str(p.get("prompt") or "").strip()
+    if not prompt: return _error_response(400, "Prompt required")
+    body = {"model": "openai-fast",
+            "messages": [{"role": "system", "content": SYSTEM_PROMPTS["image_prompt"]},
+                         {"role": "user", "content": prompt}],
+            "temperature": 0.7}
+    text, err = _openai_compat_once("https://text.pollinations.ai/openai/chat/completions",
+                                    {"Content-Type": "application/json"}, body)
+    if err[0]: return _error_response(err[0], err[1] or "Error")
+    return jsonify({"prompt": (text or prompt).strip().strip('"')})
+
+
+# ---------------------------------------------------------------------------
+# /api/tts  — returns audio as base64 data-URI
+# ---------------------------------------------------------------------------
+@app.route("/api/tts", methods=["POST", "OPTIONS"])
+def api_tts():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    provider = str(p.get("provider") or "pollinations")
+    model    = str(p.get("model") or "openai-audio")
+    voice    = str(p.get("voice") or "alloy")
+    text     = str(p.get("text") or "").strip()
+    if not text: return _error_response(400, "Text required")
+
+    def _openai_tts(key, use_model):
+        if not key: return None, (401, "OpenAI key required")
+        try:
+            r = requests.post("https://api.openai.com/v1/audio/speech",
+                              headers={"Authorization": f"Bearer {key}",
+                                       "Content-Type": "application/json"},
+                              json={"model": use_model, "voice": voice, "input": text},
+                              timeout=180)
+            if not r.ok: return None, (r.status_code, _extract_error_message(r.text))
+            return _audio_bytes_to_data_uri(r.content), (0, "")
+        except requests.RequestException as e:
+            return None, (503, f"Network: {e}")
+
+    if provider == "pollinations":
+        url = (f"https://text.pollinations.ai/{urlquote(text)}"
+               f"?model=openai-audio&voice={urlquote(voice)}")
+        try:
+            r = requests.get(url, timeout=180)
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.ok and r.content and ("audio" in ct or "mpeg" in ct or "mp3" in ct):
+                return jsonify({"url": _audio_bytes_to_data_uri(r.content)})
+            openai_key = _req_key(p, "openai")
+            if r.status_code >= 500 and openai_key:
+                out, err = _openai_tts(openai_key, "gpt-4o-mini-tts")
+                if err[0] == 0: return jsonify({"url": out})
+            return _error_response(r.status_code or 502, _extract_error_message(r.text))
+        except requests.RequestException:
+            openai_key = _req_key(p, "openai")
+            if openai_key:
+                out, err = _openai_tts(openai_key, "gpt-4o-mini-tts")
+                if err[0] == 0: return jsonify({"url": out})
+                return _error_response(err[0], err[1])
+            return _error_response(502, "Pollinations TTS request failed")
+
+    if provider == "openai":
+        out, err = _openai_tts(_req_key(p, "openai"), model)
+        if err[0]: return _error_response(err[0], err[1])
+        return jsonify({"url": out})
+
+    if provider == "elevenlabs":
+        key = _req_key(p, "elevenlabs")
+        if not key: return _error_response(401, "ElevenLabs key required")
+        voice_id = voice or "EXAVITQu4vr4xnSDxMaL"
+        try:
+            r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                              headers={"xi-api-key": key, "Content-Type": "application/json",
+                                       "Accept": "audio/mpeg"},
+                              json={"text": text, "model_id": model,
+                                    "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}},
+                              timeout=180)
+            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
+            return jsonify({"url": _audio_bytes_to_data_uri(r.content)})
+        except Exception as e:
+            return _error_response(502, str(e))
+
+    return _error_response(400, f"TTS not implemented for {provider}")
+
+
+# ---------------------------------------------------------------------------
+# /api/stt
+# ---------------------------------------------------------------------------
+@app.route("/api/stt", methods=["POST", "OPTIONS"])
+def api_stt():
+    if request.method == "OPTIONS": return "", 204
+    if "audio" not in request.files: return _error_response(400, "audio file required")
+    audio    = request.files["audio"]
+    provider = request.form.get("provider", "groq")
+    model    = request.form.get("model", "whisper-large-v3-turbo")
+    # Keys sent as form field
+    try:
+        cfg_json = request.form.get("config", "{}")
+        cfg = json.loads(cfg_json) if cfg_json else {}
+    except Exception:
+        cfg = {}
+    p_wrap = {"config": cfg}
+
+    if provider == "groq":
+        key = _req_key(p_wrap, "groq")
+        if not key: return _error_response(401, "Groq key required")
+        try:
+            r = requests.post("https://api.groq.com/openai/v1/audio/transcriptions",
+                              headers={"Authorization": f"Bearer {key}"},
+                              files={"file": (audio.filename or "audio.mp3", audio.stream,
+                                              audio.mimetype or "audio/mpeg")},
+                              data={"model": model, "response_format": "json"},
+                              timeout=180)
+            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
+            return jsonify({"text": r.json().get("text", "")})
+        except Exception as e:
+            return _error_response(502, str(e))
+
+    if provider == "openai":
+        key = _req_key(p_wrap, "openai")
+        if not key: return _error_response(401, "OpenAI key required")
+        try:
+            r = requests.post("https://api.openai.com/v1/audio/transcriptions",
+                              headers={"Authorization": f"Bearer {key}"},
+                              files={"file": (audio.filename or "audio.mp3", audio.stream,
+                                              audio.mimetype or "audio/mpeg")},
+                              data={"model": model},
+                              timeout=180)
+            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
+            return jsonify({"text": r.json().get("text", "")})
+        except Exception as e:
+            return _error_response(502, str(e))
+
+    if provider == "elevenlabs":
+        key = _req_key(p_wrap, "elevenlabs")
+        if not key: return _error_response(401, "ElevenLabs key required")
+        try:
+            r = requests.post("https://api.elevenlabs.io/v1/speech-to-text",
+                              headers={"xi-api-key": key},
+                              files={"file": (audio.filename or "audio.mp3", audio.stream,
+                                              audio.mimetype or "audio/mpeg")},
+                              data={"model_id": model},
+                              timeout=180)
+            if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
+            return jsonify({"text": r.json().get("text", "")})
+        except Exception as e:
+            return _error_response(502, str(e))
+
+    return _error_response(400, f"STT not implemented for {provider}")
+
+
+# ---------------------------------------------------------------------------
+# /api/translate
+# ---------------------------------------------------------------------------
+@app.route("/api/translate", methods=["POST", "OPTIONS"])
+def api_translate():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    text   = str(p.get("text") or "").strip()
+    target = str(p.get("target_lang") or "EN").upper()
+    source = str(p.get("source_lang") or "").upper()
+    if not text: return _error_response(400, "text required")
+    key = _req_key(p, "deepl")
+    if not key: return _error_response(401, "DeepL key required")
+    plan = _req_provider_cfg(p, "deepl").get("plan", "free")
+    base = "https://api-free.deepl.com" if plan == "free" else "https://api.deepl.com"
+    data = {"text": text, "target_lang": target}
+    if source: data["source_lang"] = source
+    try:
+        r = requests.post(f"{base}/v2/translate",
+                          headers={"Authorization": f"DeepL-Auth-Key {key}"},
+                          data=data, timeout=60)
+        if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
+        translations = r.json().get("translations") or []
+        return jsonify({"text": translations[0].get("text", "") if translations else "",
+                        "detected_source_language": translations[0].get("detected_source_language", "") if translations else ""})
+    except Exception as e:
+        return _error_response(502, str(e))
+
+
+# ---------------------------------------------------------------------------
+# /api/voices
+# ---------------------------------------------------------------------------
+@app.route("/api/pollinations/voices", methods=["GET"])
+def api_pollinations_voices():
+    return jsonify({"voices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer",
+                               "coral", "sage", "ash", "verse", "ballad"]})
+
+
+@app.route("/api/openai/voices", methods=["GET"])
+def api_openai_voices():
+    return jsonify({"voices": ["alloy", "ash", "ballad", "coral", "echo", "fable",
+                               "onyx", "nova", "sage", "shimmer", "verse"]})
+
+
+@app.route("/api/elevenlabs/voices", methods=["GET", "POST", "OPTIONS"])
+def api_eleven_voices():
+    if request.method == "OPTIONS": return "", 204
+    p = request.get_json(silent=True) or {}
+    key = _req_key(p, "elevenlabs")
+    if not key:
+        return jsonify({"voices": [
+            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella"},
+            {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel"},
+            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam"},
+        ]})
+    try:
+        r = requests.get("https://api.elevenlabs.io/v1/voices",
+                         headers={"xi-api-key": key}, timeout=15)
+        if not r.ok: return _error_response(r.status_code, _extract_error_message(r.text))
+        return jsonify({"voices": [{"id": v.get("voice_id"), "name": v.get("name")}
+                                   for v in (r.json().get("voices") or [])]})
+    except Exception as e:
+        return _error_response(502, str(e))
+
+
+# ---------------------------------------------------------------------------
+# /api/agent
+# ---------------------------------------------------------------------------
+@app.route("/api/agent/cancel/<run_id>", methods=["POST", "OPTIONS"])
 def api_agent_cancel(run_id):
+    if request.method == "OPTIONS": return "", 204
     ev = _cancel_events.get(run_id)
     if ev: ev.set()
     return jsonify({"ok": True})
 
 
-@app.route("/api/agent/run", methods=["POST"])
+@app.route("/api/agent/run", methods=["POST", "OPTIONS"])
 def api_agent_run():
-    cfg = load_config()
+    if request.method == "OPTIONS": return "", 204
     p = request.get_json(silent=True) or {}
-    run_id = str(p.get("run_id") or f"run_{uuid.uuid4().hex[:8]}")
-    task   = str(p.get("task") or "").strip()
+    run_id   = str(p.get("run_id") or f"run_{uuid.uuid4().hex[:8]}")
+    task     = str(p.get("task") or "").strip()
     steering = str(p.get("steering") or "").strip()[:4000]
-    provider = str(p.get("provider") or cfg.get("default_chat_provider") or "pollinations")
-    model    = str(p.get("model") or cfg.get("default_chat_model") or "openai-fast")
+    provider = str(p.get("provider") or "pollinations")
+    model    = str(p.get("model") or "openai-fast")
     try: req_steps = int(p.get("max_steps", 20))
     except Exception: req_steps = 20
     max_actions = None if req_steps <= 0 else min(max(req_steps, 1), 100)
@@ -2617,7 +2039,7 @@ def api_agent_run():
 
     cancel_event = Event()
     _cancel_events[run_id] = cancel_event
-    executor = AgentExecutor(cfg, cancel_event)
+    executor = AgentExecutor(cancel_event)
 
     def emit(o): return f"data: {json.dumps(o)}\n\n"
 
@@ -2625,14 +2047,13 @@ def api_agent_run():
         llm_calls = 0; step_num = 0; actions_done = 0
         try:
             use_native = _model_supports_tools(provider, model)
-            ws = str(_workspace_root(cfg))
-            yield emit({"event": "start", "run_id": run_id, "workspace": ws,
+            yield emit({"event": "start", "run_id": run_id, "workspace": "(serverless)",
                         "native_tools": use_native, "provider": provider, "model": model})
 
-            sysp = AGENT_SYSTEM + f"\n\nWorkspace: {ws}\nPlatform: {platform.system()}\n"
+            sysp = AGENT_SYSTEM + "\n\nNote: Running in serverless mode. No filesystem or shell access. Can web search and fetch URLs.\n"
             if steering: sysp += f"\nUser steering: {steering}\n"
             if not use_native:
-                sysp += ("\n\nThis model lacks native tool calling. Respond with EXACTLY ONE JSON object:\n"
+                sysp += ("\n\nRespond with EXACTLY ONE JSON object:\n"
                          '{"thought":"…","actions":[{"tool":"<name>","args":{…}}],"final":"…"}\n\n'
                          "Tools:\n" + _agent_tool_text_description())
 
@@ -2646,7 +2067,7 @@ def api_agent_run():
                 yield emit({"event": "llm_call", "turn": llm_calls + 1,
                             "provider": provider, "model": model})
                 llm_calls += 1
-                resp = _agent_call_model(provider, model, messages, use_native, cfg)
+                resp = _agent_call_model(provider, model, messages, use_native, p)
 
                 if resp.get("error"):
                     yield emit({"event": "error", "error": resp["error"]})
@@ -2664,7 +2085,8 @@ def api_agent_run():
 
                     remaining = None if max_actions is None else max_actions - actions_done
                     if remaining is not None and remaining <= 0:
-                        yield emit({"event": "final", "message": f"Stopped: max steps ({max_actions})", "llm_calls_made": llm_calls})
+                        yield emit({"event": "final", "message": f"Stopped: max steps ({max_actions})",
+                                    "llm_calls_made": llm_calls})
                         yield "data: [DONE]\n\n"; return
                     runs = tool_calls if remaining is None else tool_calls[:remaining]
                     for tc in runs:
@@ -2677,23 +2099,21 @@ def api_agent_run():
                             args = json.loads(fn.get("arguments") or "{}")
                             if not isinstance(args, dict): args = {}
                         except Exception: args = {}
-
                         step_num += 1; actions_done += 1
                         yield emit({"event": "step_start", "step": step_num})
                         yield emit({"event": "tool_call", "step": step_num,
                                     "tool": tool_name, "args": args, "call_id": tc.get("id")})
-
                         if tool_name == "finish":
-                            yield emit({"event": "final", "message": str(args.get("summary") or content or "Task complete."),
+                            yield emit({"event": "final",
+                                        "message": str(args.get("summary") or content or "Task complete."),
                                         "llm_calls_made": llm_calls})
                             yield "data: [DONE]\n\n"; return
-
                         chunks = []
-                        for ev in executor.run_tool(tool_name, args):
-                            if "stdout" in ev:
+                        for ev_item in executor.run_tool(tool_name, args):
+                            if "stdout" in ev_item:
                                 yield emit({"event": "tool_stdout", "step": step_num,
-                                            "tool": tool_name, "text": ev["stdout"]})
-                            if "result" in ev: chunks.append(ev["result"])
+                                            "tool": tool_name, "text": ev_item["stdout"]})
+                            if "result" in ev_item: chunks.append(ev_item["result"])
                         result = ("\n".join(chunks) if chunks else "(no output)")[:12000]
                         yield emit({"event": "tool_result", "step": step_num,
                                     "tool": tool_name, "result": result})
@@ -2718,11 +2138,13 @@ def api_agent_run():
                 if max_actions is not None:
                     rem = max_actions - actions_done
                     if rem <= 0:
-                        yield emit({"event": "final", "message": f"Stopped: max steps ({max_actions})", "llm_calls_made": llm_calls})
+                        yield emit({"event": "final", "message": f"Stopped: max steps ({max_actions})",
+                                    "llm_calls_made": llm_calls})
                         yield "data: [DONE]\n\n"; return
                     actions = actions[:rem]
                 if not actions:
-                    yield emit({"event": "final", "message": str(plan.get("final") or content or "Run complete."),
+                    yield emit({"event": "final",
+                                "message": str(plan.get("final") or content or "Run complete."),
                                 "llm_calls_made": llm_calls})
                     yield "data: [DONE]\n\n"; return
                 feedback = []
@@ -2735,14 +2157,16 @@ def api_agent_run():
                     yield emit({"event": "step_start", "step": step_num})
                     yield emit({"event": "tool_call", "step": step_num, "tool": tn, "args": args})
                     if tn == "finish":
-                        yield emit({"event": "final", "message": str(args.get("summary") or plan.get("final") or "Done."),
+                        yield emit({"event": "final",
+                                    "message": str(args.get("summary") or plan.get("final") or "Done."),
                                     "llm_calls_made": llm_calls})
                         yield "data: [DONE]\n\n"; return
                     chunks = []
-                    for ev in executor.run_tool(tn, args):
-                        if "stdout" in ev:
-                            yield emit({"event": "tool_stdout", "step": step_num, "tool": tn, "text": ev["stdout"]})
-                        if "result" in ev: chunks.append(ev["result"])
+                    for ev_item in executor.run_tool(tn, args):
+                        if "stdout" in ev_item:
+                            yield emit({"event": "tool_stdout", "step": step_num, "tool": tn,
+                                        "text": ev_item["stdout"]})
+                        if "result" in ev_item: chunks.append(ev_item["result"])
                     result = ("\n".join(chunks) if chunks else "(no output)")[:12000]
                     yield emit({"event": "tool_result", "step": step_num, "tool": tn, "result": result})
                     feedback.append(f"[{tn}]\n{result}")
@@ -2761,162 +2185,10 @@ def api_agent_run():
 
 
 # ---------------------------------------------------------------------------
-# Workspace FS
-# ---------------------------------------------------------------------------
-@app.route("/api/fs/list", methods=["GET"])
-def api_fs_list():
-    cfg = load_config()
-    rel = request.args.get("path", "")
-    try: target = _resolve_workspace_path(rel, cfg)
-    except PermissionError: return _error_response(403, "Path outside workspace")
-    if not target.exists() or not target.is_dir():
-        return _error_response(404, "Folder not found")
-    items = []
-    for p in sorted(target.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-        try:
-            stat = p.stat()
-            items.append({"name": p.name, "is_dir": p.is_dir(),
-                          "size": stat.st_size, "mtime": int(stat.st_mtime),
-                          "path": str(p.relative_to(_workspace_root(cfg))).replace("\\", "/")})
-        except Exception: continue
-    return jsonify({"items": items, "path": str(target.relative_to(_workspace_root(cfg))).replace("\\", "/"),
-                    "root": str(_workspace_root(cfg))})
-
-
-@app.route("/api/fs/read", methods=["GET"])
-def api_fs_read():
-    cfg = load_config()
-    rel = request.args.get("path", "")
-    try: target = _resolve_workspace_path(rel, cfg)
-    except PermissionError: return _error_response(403, "Path outside workspace")
-    if not target.exists() or not target.is_file():
-        return _error_response(404, "File not found")
-    try:
-        return jsonify({"content": target.read_text("utf-8", errors="replace"),
-                        "path": rel, "size": target.stat().st_size})
-    except Exception as e:
-        return _error_response(500, str(e))
-
-
-@app.route("/api/fs/write", methods=["POST"])
-def api_fs_write():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    try: target = _resolve_workspace_path(str(p.get("path", "")), cfg)
-    except PermissionError: return _error_response(403, "Path outside workspace")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        target.write_text(str(p.get("content", "")), encoding="utf-8")
-        return jsonify({"ok": True})
-    except Exception as e:
-        return _error_response(500, str(e))
-
-
-@app.route("/api/fs/mkdir", methods=["POST"])
-def api_fs_mkdir():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    try: target = _resolve_workspace_path(str(p.get("path", "")), cfg)
-    except PermissionError: return _error_response(403, "Path outside workspace")
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return _error_response(500, str(e))
-
-
-@app.route("/api/fs/delete", methods=["POST"])
-def api_fs_delete():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    try: target = _resolve_workspace_path(str(p.get("path", "")), cfg)
-    except PermissionError: return _error_response(403, "Path outside workspace")
-    try:
-        if target.is_dir(): shutil.rmtree(target)
-        else: target.unlink()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return _error_response(500, str(e))
-
-
-@app.route("/api/fs/rename", methods=["POST"])
-def api_fs_rename():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    try:
-        src = _resolve_workspace_path(str(p.get("src", "")), cfg)
-        dst = _resolve_workspace_path(str(p.get("dst", "")), cfg)
-    except PermissionError: return _error_response(403, "Path outside workspace")
-    try:
-        src.rename(dst); return jsonify({"ok": True})
-    except Exception as e:
-        return _error_response(500, str(e))
-
-
-@app.route("/api/shell/exec", methods=["POST"])
-def api_shell_exec():
-    cfg = load_config()
-    p = request.get_json(silent=True) or {}
-    cmd = str(p.get("cmd", "")).strip()
-    if not cmd: return _error_response(400, "cmd required")
-    cwd = str(_workspace_root(cfg))
-    popen_args = dict(shell=True) if IS_WINDOWS else dict(shell=True, executable="/bin/bash")
-    try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=120, **popen_args)
-        return jsonify({"stdout": proc.stdout, "stderr": proc.stderr, "rc": proc.returncode})
-    except subprocess.TimeoutExpired:
-        return _error_response(408, "Timeout (120s)")
-    except Exception as e:
-        return _error_response(500, str(e))
-
-
-@app.route("/api/gallery", methods=["GET"])
-def api_gallery():
-    items = []
-    for f in sorted(GENERATED_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp3", ".wav"):
-            items.append({"name": f.name, "url": f"/generated/{f.name}",
-                          "size": f.stat().st_size, "mtime": int(f.stat().st_mtime),
-                          "kind": "audio" if f.suffix.lower() in (".mp3", ".wav") else "image"})
-    return jsonify({"items": items})
-
-
-@app.route("/api/gallery/<path:name>", methods=["DELETE"])
-def api_gallery_delete(name):
-    target = GENERATED_DIR / name
-    try:
-        target.relative_to(GENERATED_DIR)
-    except ValueError:
-        return _error_response(403, "Outside gallery")
-    if target.exists(): target.unlink()
-    return jsonify({"ok": True})
-
-
-@app.route("/api/gallery/clear", methods=["POST"])
-def api_gallery_clear():
-    for f in GENERATED_DIR.iterdir():
-        try:
-            if f.is_file(): f.unlink()
-        except Exception: pass
-    return jsonify({"ok": True})
-
-
-# ---------------------------------------------------------------------------
 # Boot
 # ---------------------------------------------------------------------------
-def _lan_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close(); return ip
-    except Exception:
-        return "127.0.0.1"
-
-
 if __name__ == "__main__":
+    import os
     port = int(os.environ.get("PORT", 5000))
-    print(f"\n  {APP_NAME} v{APP_VERSION}")
-    print(f"  http://127.0.0.1:{port}")
-    print(f"  http://{_lan_ip()}:{port}\n")
+    print(f"\n  {APP_NAME} v{APP_VERSION}  http://127.0.0.1:{port}\n")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
