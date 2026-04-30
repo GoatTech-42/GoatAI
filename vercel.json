@@ -8,10 +8,7 @@
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index.py" },
-    { "source": "/style.css", "destination": "/style.css" },
-    { "source": "/script.js", "destination": "/script.js" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/api/(.*)", "destination": "/api/index" }
   ],
   "headers": [
     {
