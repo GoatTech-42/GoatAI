@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="color-scheme" content="light dark" />
+  <title>GoatAI · v1</title>
+
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.1/css/all.min.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-light.min.css" id="hljs-light" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/atom-one-dark.min.css" id="hljs-dark" disabled />
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310151c'/%3E%3Ctext x='50%25' y='44' font-family='Inter,Arial,sans-serif' font-weight='800' font-size='34' text-anchor='middle' fill='%23f5f1e6'%3EG%3C/text%3E%3Ccircle cx='48' cy='44' r='5' fill='%23ff7849'/%3E%3C/svg%3E" />
+</head>
+<body data-theme="dark">
+  ...existing code...
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <span class="brand-letter">G</span>
+        <span class="brand-dot"></span>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">GoatAI</div>
+        <div class="brand-version">v1.0</div>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Main">
+      <button class="nav-item active" data-view="chat" title="Chat (Ctrl+1)">
+        <i class="fa-regular fa-comment"></i><span>Chat</span>
+      </button>
+      <button class="nav-item" data-view="image" title="Image (Ctrl+2)">
+        <i class="fa-regular fa-image"></i><span>Image</span>
+      </button>
+      <button class="nav-item" data-view="audio" title="Audio (Ctrl+3)">
+        <i class="fa-solid fa-wave-square"></i><span>Audio</span>
+      </button>
+      <button class="nav-item" data-view="agent" title="Agent (Ctrl+4)">
+        <i class="fa-solid fa-robot"></i><span>Agent</span>
+      </button>
+      <button class="nav-item" data-view="webgpu" title="Local AI (Ctrl+5)">
+        <i class="fa-solid fa-microchip"></i><span>Local AI</span>
+        <span class="nav-badge">GPU</span>
+      </button>
+      <button class="nav-item" data-view="translate" title="Translate (Ctrl+6)">
+        <i class="fa-solid fa-language"></i><span>Translate</span>
+      </button>
+      <button class="nav-item" data-view="prompts" title="Prompts">
+        <i class="fa-regular fa-bookmark"></i><span>Prompts</span>
+      </button>
+      <div class="nav-section">Workspace</div>
+      <button class="nav-item" data-view="files">
+        <i class="fa-regular fa-folder-open"></i><span>Files</span>
+      </button>
+      <button class="nav-item" data-view="terminal">
+        <i class="fa-solid fa-terminal"></i><span>Terminal</span>
+      </button>
+      <button class="nav-item" data-view="gallery">
+        <i class="fa-regular fa-images"></i><span>Gallery</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="sidebar-workspace" id="sidebarWorkspace" title="Current workspace">
+      <i class="fa-solid fa-folder-tree"></i>
+      <span id="sidebarWorkspacePath">~</span>
+    </div>
+
+    <button class="settings-btn" data-view="settings" title="Settings (Ctrl+,)">
+      <i class="fa-solid fa-sliders"></i><span>Settings</span>
+    </button>
+  </aside>
+
+  <!-- ================ MAIN ================ -->
+  <main class="main">
+    <!-- ============ CHAT ============ -->
+    <section class="view active" id="view-chat" aria-label="Chat">
+      <header class="view-header">
+        <h1 class="view-title"><small>Conversation</small>Chat</h1>
+        <div class="view-controls">
+          <div class="field">
+            <label>Provider</label>
+            <select id="chatProvider"></select>
+          </div>
+          <div class="field">
+            <label>Model
+              <i class="fa-solid fa-eye vision-icon" id="chatVisionIcon" hidden title="Supports images"></i>
+              <i class="fa-solid fa-fire uncensored-icon" id="chatUncensoredIcon" hidden title="Uncensored"></i>
+            </label>
+            <select id="chatModel"></select>
+          </div>
+          <button class="btn" id="newChatBtn" title="New chat (Ctrl+N)"><i class="fa-solid fa-plus"></i> New</button>
+          <button class="btn btn-icon" id="chatExportBtn" title="Export"><i class="fa-solid fa-file-export"></i></button>
+        </div>
+      </header>
+
+      <div class="chat-container">
+        <aside class="chat-sidebar" aria-label="Conversations">
+          <div class="chat-history-header">
+            <span>History</span>
+            <input type="search" id="chatSearchInput" placeholder="Search…" />
+          </div>
+          <div id="chatHistory">
+            <div class="chat-history-empty">No saved chats yet.</div>
+          </div>
+        </aside>
+
+        <div class="chat-main">
+          <div class="messages" id="messages">
+            <div class="empty">
+              <h2 class="empty-title">Start a conversation</h2>
+              <p class="empty-text">
+                Free, no signup: <kbd>Pollinations</kbd>, <kbd>LLM7</kbd>, <kbd>DuckDuckGo AI</kbd>.<br/>
+                Add API keys in <strong>Settings</strong> for OpenAI, Anthropic, Groq, Cerebras, xAI, OpenRouter, and 12+ more.<br/>
+                Type <kbd>/image a red dragon over tokyo</kbd> to make pictures right in chat.
+              </p>
+              <div class="empty-chips">
+                <button class="quick-chip" data-prompt="Explain how transformers attention works in two paragraphs.">How attention works</button>
+                <button class="quick-chip" data-prompt="Write a haskell quicksort and explain it line by line.">Haskell quicksort</button>
+                <button class="quick-chip" data-prompt="/image a cyberpunk cat detective in neon Tokyo, cinematic">/image cyberpunk cat</button>
+                <button class="quick-chip" data-prompt="What's new in Python 3.13?">Python 3.13 news</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="composer-toolbar">
+              <label class="toolbar-btn" title="Attach image">
+                <i class="fa-solid fa-paperclip"></i>
+                <input type="file" id="chatAttachment" accept="image/*" hidden />
+              </label>
+              <button class="toolbar-btn" id="sysPromptBtn" title="System prompt"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+              <button class="toolbar-btn" id="webSearchToggle" title="Toggle web search"><i class="fa-solid fa-globe"></i></button>
+              <button class="toolbar-btn" id="imageModeToggle" title="/image mode"><i class="fa-regular fa-image"></i></button>
+              <button class="toolbar-btn" id="uncensoredModeToggle" title="Uncensored mode"><i class="fa-solid fa-fire"></i></button>
+              <select class="toolbar-select" id="sysPresetSelect" title="System prompt preset">
+                <option value="">Auto preset</option>
+              </select>
+              <div class="temp-field" title="Temperature">
+                <i class="fa-solid fa-temperature-half"></i>
+                <input type="range" id="chatTemperature" min="0" max="2" step="0.1" value="0.7" />
+                <span id="chatTemperatureVal">0.7</span>
+              </div>
+              <div id="attachmentPreview" class="attachment-preview"></div>
+              <div class="toolbar-spacer"></div>
+              <span class="badge" id="webSearchBadge" hidden><i class="fa-solid fa-globe"></i> Search</span>
+              <span class="badge" id="imageModeBadge" hidden><i class="fa-regular fa-image"></i> Image</span>
+              <span class="badge accent" id="uncensoredBadge" hidden><i class="fa-solid fa-fire"></i> Uncensored</span>
+              <span class="token-count" id="chatTokenCount">~0 tok</span>
+            </div>
+            <div class="composer-wrap">
+              <textarea id="chatInput" placeholder="Write a message… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+              <button class="send-btn" id="chatSendBtn" title="Send">
+                <i class="fa-solid fa-arrow-up"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    ...existing code...
+          <section class="view" id="view-image" aria-label="Image">
+        <header class="view-header">
+          <h1 class="view-title"><small>Generation</small>Image</h1>
+          <div class="view-controls">
+            <div class="field"><label>Provider</label><select id="imageProvider"></select></div>
+            <div class="field"><label>Model</label><select id="imageModel"></select></div>
+          </div>
+        </header>
+
+        <div class="image-panel">
+          <div class="image-controls">
+            <!-- Prompt Section -->
+            <div class="control-section">
+              <div class="section-header">
+                <label>Prompt</label>
+                <div class="prompt-actions">
+                  <button class="icon-btn" id="imageSurpriseBtn" title="Surprise me"><i class="fa-solid fa-dice"></i></button>
+                  <button class="icon-btn" id="imageHistoryBtn" title="Prompt history"><i class="fa-solid fa-clock-rotate-left"></i></button>
+                </div>
+              </div>
+              <textarea id="imagePrompt" rows="4" placeholder="Describe the image you want to create…"></textarea>
+              <div class="prompt-history" id="promptHistoryDropdown" hidden>
+                <div class="history-header">
+                  <span>Recent prompts</span>
+                  <button class="text-btn" id="clearHistoryBtn">Clear</button>
+                </div>
+                <div class="history-list" id="promptHistoryList"></div>
+              </div>
+            </div>
+
+            <!-- Style Presets -->
+            <div class="control-section">
+              <label>Style preset</label>
+              <div class="style-chips" id="imageStyleChips">
+                <button class="style-chip active" data-value="">None</button>
+                <button class="style-chip" data-value="photorealistic, high detail, 8k, sharp focus, professional photography"><i class="fa-solid fa-camera"></i> Photo</button>
+                <button class="style-chip" data-value="digital art, vibrant colors, detailed illustration, concept art"><i class="fa-solid fa-palette"></i> Digital</button>
+                <button class="style-chip" data-value="oil painting, classical art, rich brushwork, museum quality"><i class="fa-solid fa-paintbrush"></i> Oil</button>
+                <button class="style-chip" data-value="anime style, clean lines, vibrant colors, Studio Ghibli inspired"><i class="fa-solid fa-ghost"></i> Anime</button>
+                <button class="style-chip" data-value="watercolor, soft edges, pastel colors, delicate washes"><i class="fa-solid fa-droplet"></i> Water</button>
+                <button class="style-chip" data-value="3d render, octane render, ray traced, blender, c4d"><i class="fa-solid fa-cube"></i> 3D</button>
+                <button class="style-chip" data-value="minimalist, flat design, geometric, swiss design, clean"><i class="fa-solid fa-shapes"></i> Minimal</button>
+                <button class="style-chip" data-value="cyberpunk, neon lights, blade runner aesthetic, futuristic"><i class="fa-solid fa-bolt"></i> Cyber</button>
+                <button class="style-chip" data-value="fantasy art, magical atmosphere, ethereal lighting, epic scale"><i class="fa-solid fa-dragon"></i> Fantasy</button>
+                <button class="style-chip" data-value="pixel art, 16-bit, retro game aesthetic, dithering"><i class="fa-solid fa-gamepad"></i> Pixel</button>
+                <button class="style-chip" data-value="film still, cinematic, 35mm anamorphic, movie screenshot, dramatic lighting"><i class="fa-solid fa-film"></i> Cinema</button>
+              </div>
+              <input type="hidden" id="imageStyle" value="" />
+            </div>
+
+            <!-- Reference Image -->
+            <div class="control-section">
+              <label>Reference image <small class="label-hint">(optional — img2img)</small></label>
+              <div class="image-dropzone" id="imageDropzone">
+                <input type="file" id="imageReference" accept="image/*" hidden />
+                <div class="dropzone-content" id="dropzoneContent">
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span>Drop an image or click to upload</span>
+                </div>
+                <div class="dropzone-preview" id="dropzonePreview" hidden>
+                  <img id="dropzonePreviewImg" src="" alt="" />
+                  <button class="icon-btn remove" id="removeReferenceBtn"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Settings -->
+            <div class="control-section">
+              <label>Aspect ratio</label>
+              <div class="ratio-grid" id="imageRatioGrid">
+                <button class="ratio-btn" data-size="1024x1024" title="Square">
+                  <div class="ratio-icon square"></div>
+                  <span>1:1</span>
+                </button>
+                <button class="ratio-btn active" data-size="1024x1792" title="Portrait">
+                  <div class="ratio-icon portrait"></div>
+                  <span>9:16</span>
+                </button>
+                <button class="ratio-btn" data-size="1792x1024" title="Landscape">
+                  <div class="ratio-icon landscape"></div>
+                  <span>16:9</span>
+                </button>
+                <button class="ratio-btn" data-size="1024x1365" title="Portrait 3:4">
+                  <div class="ratio-icon portrait-alt"></div>
+                  <span>3:4</span>
+                </button>
+                <button class="ratio-btn" data-size="1365x1024" title="Landscape 4:3">
+                  <div class="ratio-icon landscape-alt"></div>
+                  <span>4:3</span>
+                </button>
+                <button class="ratio-btn" data-size="1920x1080" title="Widescreen">
+                  <div class="ratio-icon widescreen"></div>
+                  <span>HD</span>
+                </button>
+              </div>
+              <input type="hidden" id="imageSize" value="1024x1792" />
+            </div>
+
+            <!-- Advanced Options -->
+            <div class="control-section">
+              <button class="accordion-toggle" id="advancedToggle">
+                <span>Advanced options</span>
+                <i class="fa-solid fa-chevron-down"></i>
+              </button>
+              <div class="accordion-body" id="advancedBody">
+                <div class="image-options">
+                  <div class="field">
+                    <label>Count</label>
+                    <select id="imageCount">
+                      <option>1</option><option>2</option><option>3</option><option>4</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Seed</label>
+                    <input type="number" id="imageSeed" placeholder="random" />
+                  </div>
+                  <div class="field">
+                    <label>CFG Scale</label>
+                    <input type="number" id="imageCfg" value="7.5" min="1" max="20" step="0.5" />
+                  </div>
+                </div>
+                <div class="field" style="margin-top:10px;">
+                  <label>Negative prompt</label>
+                  <input type="text" id="imageNegative" placeholder="Things to avoid: blurry, low quality, watermark, text…" />
+                </div>
+                <div class="field" style="margin-top:10px;">
+                  <label>Steps <small class="label-hint">(higher = more detail, slower)</small></label>
+                  <div class="range-wrap">
+                    <input type="range" id="imageStepsRange" min="10" max="50" value="25" />
+                    <span class="range-value" id="imageStepsValue">25</span>
+                  </div>
+                  <input type="hidden" id="imageSteps" value="25" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="image-action-row">
+              <button class="btn" id="imageEnhanceBtn"><i class="fa-solid fa-wand-magic-sparkles"></i> Enhance</button>
+              <button class="btn btn-primary" id="imageGenBtn"><i class="fa-solid fa-sparkles"></i> Generate</button>
+            </div>
+
+            <div id="imageBanner"></div>
+            <div class="image-hint" id="imageHint"></div>
+          </div>
+
+          <!-- Results Panel -->
+          <div class="image-results" id="imageResults">
+            <div class="empty">
+              <div class="empty-illustration">
+                <i class="fa-regular fa-images"></i>
+              </div>
+              <h2 class="empty-title">Create something amazing</h2>
+              <p class="empty-text">
+                Describe your idea and hit <strong>Generate</strong> — or try one of these:
+              </p>
+              <div class="example-prompts">
+                <button class="example-chip" data-prompt="A majestic dragon perched on a cliff at sunset, photorealistic, 8k, dramatic lighting">Dragon at sunset</button>
+                <button class="example-chip" data-prompt="A cozy cyberpunk cafe interior, neon signs, rain outside, cinematic atmosphere, detailed">Cyberpunk cafe</button>
+                <button class="example-chip" data-prompt="An astronaut floating in a nebula, vibrant colors, surreal, digital art, highly detailed">Space nebula</button>
+                <button class="example-chip" data-prompt="A mystical forest with glowing mushrooms and fireflies, fantasy art, ethereal lighting">Enchanted forest</button>
+                <button class="example-chip" data-prompt="A retro-futuristic cityscape, flying cars, art deco meets sci-fi, sunset, detailed illustration">Retro future city</button>
+                <button class="example-chip" data-prompt="A serene Japanese garden in autumn, red maple leaves, koi pond, watercolor style, peaceful">Japanese garden</button>
+              </div>
+              <div class="provider-hints">
+                <div class="hint-row"><span class="hint-badge free">FREE</span><strong>Pollinations</strong> — no key needed (Flux, Turbo, SDXL)</div>
+                <div class="hint-row"><span class="hint-badge free">FREE</span><strong>Together.ai</strong> — FLUX.1-schnell-Free</div>
+                <div class="hint-row"><span class="hint-badge">KEY</span><strong>Replicate</strong> — FLUX 1.1 Pro, Recraft V3</div>
+                <div class="hint-row"><span class="hint-badge">KEY</span><strong>Stability AI</strong> — Stable Image Ultra, Core</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Image Lightbox -->
+      <div class="lightbox" id="imageLightbox" hidden>
+        <button class="lightbox-close" id="lightboxClose"><i class="fa-solid fa-xmark"></i></button>
+        <button class="lightbox-nav lightbox-prev" id="lightboxPrev"><i class="fa-solid fa-chevron-left"></i></button>
+        <button class="lightbox-nav lightbox-next" id="lightboxNext"><i class="fa-solid fa-chevron-right"></i></button>
+        <div class="lightbox-content">
+          <img id="lightboxImg" src="" alt="" />
+          <div class="lightbox-meta" id="lightboxMeta"></div>
+        </div>
+      </div>
+
+      <!-- ============ AUDIO ============ -->
+    <section class="view" id="view-audio" aria-label="Audio">
+      <header class="view-header">
+        <h1 class="view-title"><small>Speech</small>Audio</h1>
+      </header>
+
+      <div class="audio-panel">
+        <article class="audio-card">
+          <h3>Text → Speech</h3>
+          <p class="subtitle">Pollinations is keyless but rate-limited. ElevenLabs and OpenAI give the best quality.</p>
+          <div class="row">
+            <div class="field"><label>Provider</label><select id="ttsProvider"></select></div>
+            <div class="field"><label>Model</label><select id="ttsModel"></select></div>
+            <div class="field"><label>Voice</label><select id="ttsVoice"></select></div>
+          </div>
+          <textarea id="ttsText" rows="4" placeholder="Text to synthesize…"></textarea>
+          <button class="btn btn-primary" id="ttsBtn"><i class="fa-solid fa-play"></i> Generate</button>
+          <div id="ttsResult"></div>
+        </article>
+
+        <article class="audio-card">
+          <h3>Speech → Text</h3>
+          <p class="subtitle">Groq <code>whisper-large-v3-turbo</code> is blazing fast and free-tier.</p>
+          <div class="row">
+            <div class="field"><label>Provider</label><select id="sttProvider"></select></div>
+            <div class="field"><label>Model</label><select id="sttModel"></select></div>
+          </div>
+          <div class="audio-upload" id="sttDrop">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+            <p>Drop an audio file, or click to choose</p>
+            <input type="file" id="sttFile" accept="audio/*" hidden />
+          </div>
+          <div class="row" style="gap:8px;">
+            <button class="btn" id="sttRecordBtn"><i class="fa-solid fa-microphone"></i> Record</button>
+            <button class="btn btn-primary" id="sttBtn" disabled><i class="fa-solid fa-language"></i> Transcribe</button>
+          </div>
+          <div id="sttResult"></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============ AGENT ============ -->
+    <section class="view" id="view-agent" aria-label="Agent">
+      <header class="view-header">
+        <h1 class="view-title"><small>Sandbox</small>Agent</h1>
+        <div class="view-controls">
+          <div class="field"><label>Provider</label><select id="agentProvider"></select></div>
+          <div class="field"><label>Model <i class="fa-solid fa-wrench tool-icon" id="agentToolIcon" hidden title="Native tool calling"></i></label><select id="agentModel"></select></div>
+          <div class="field">
+            <label>Max steps</label>
+            <select id="agentMaxSteps">
+              <option>6</option><option selected>10</option><option>15</option><option>20</option><option>35</option><option>50</option><option value="0">Unlimited</option>
+            </select>
+          </div>
+        </div>
+      </header>
+
+      <div class="agent-panel">
+        <div class="agent-workspace-bar">
+          <div class="agent-ws-current">
+            <i class="fa-solid fa-folder-tree"></i>
+            <code id="agentWsPath">~</code>
+          </div>
+          <div class="agent-ws-actions">
+            <input type="text" id="agentWsInput" placeholder="/abs/path or ~/myproject — Enter to switch" spellcheck="false" />
+            <button class="btn" id="agentWsSwitchBtn"><i class="fa-solid fa-arrow-right"></i> Switch</button>
+          </div>
+        </div>
+
+        <div class="agent-turn-strip" id="agentTurnStrip" hidden>
+          <div class="agent-turn-item"><span class="label">Turn</span><span class="value" id="agentTurnNow">0</span><span class="divider">/</span><span class="value" id="agentTurnMax">8</span></div>
+          <div class="agent-turn-item"><span class="label">Tools</span><span class="value" id="agentToolCalls">0</span></div>
+          <div class="agent-turn-item"><span class="label">In</span><span class="value" id="agentTokIn">0</span></div>
+          <div class="agent-turn-item"><span class="label">Out</span><span class="value" id="agentTokOut">0</span></div>
+          <div class="agent-turn-item"><span class="label">Elapsed</span><span class="value" id="agentElapsed">0s</span></div>
+        </div>
+
+        <div class="agent-examples">
+          <button class="chip" data-example="List the workspace, then summarize what this project seems to do.">Inspect project</button>
+          <button class="chip" data-example="Create hello.py that prints 'Hello!', then run it and show output.">Hello world + run</button>
+          <button class="chip" data-example="Search the web for the latest Python release and write python_news.md summarizing highlights.">Python news → file</button>
+          <button class="chip" data-example="Find the top 5 largest files in the workspace and tell me their sizes.">Biggest files</button>
+          <button class="chip" data-example="Find all .py files and count total lines of Python code.">Count LOC</button>
+        </div>
+
+        <div class="agent-log" id="agentLog">
+          <div class="empty">
+            <h2 class="empty-title">Give the agent a task</h2>
+            <p class="empty-text">It has <kbd>shell</kbd>, <kbd>read_file</kbd>, <kbd>write_file</kbd>, <kbd>edit_file</kbd>, <kbd>view_dir</kbd>, <kbd>grep</kbd>, <kbd>find</kbd>, <kbd>fetch_url</kbd>, <kbd>web_search</kbd>. Models with native tool calling use them directly; others use a JSON fallback.</p>
+          </div>
+        </div>
+
+        <div class="agent-steering">
+          <label for="agentSteering">Steering (optional)</label>
+          <textarea id="agentSteering" rows="2" placeholder="e.g. Be strict about test-driven edits. Prefer minimal diffs. Explain assumptions briefly."></textarea>
+        </div>
+
+        <div class="agent-composer">
+          <textarea id="agentTask" rows="2" placeholder="What should the agent do?"></textarea>
+          <button class="btn btn-primary" id="agentRunBtn"><i class="fa-solid fa-play"></i> Run</button>
+          <button class="btn btn-danger" id="agentStopBtn" disabled><i class="fa-solid fa-stop"></i> Stop</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ WEBGPU ============ -->
+    <section class="view" id="view-webgpu" aria-label="Local WebGPU">
+      <header class="view-header">
+        <h1 class="view-title"><small>In-browser · no server</small>Local AI</h1>
+        <div class="view-controls">
+          <div class="field">
+            <label>Model</label>
+            <select id="wgpuModel">
+              <option value="onnx-community/Llama-3.2-1B-Instruct-q4f16" data-tag="general">Llama 3.2 1B · uncensored / general (~700MB)</option>
+              <option value="onnx-community/Qwen2.5-Coder-0.5B-Instruct" data-tag="coder">Qwen 2.5 Coder 0.5B · code &amp; agent (~400MB)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Device</label>
+            <select id="wgpuDevice">
+              <option value="webgpu" selected>WebGPU</option>
+              <option value="wasm">WASM (CPU fallback)</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="wgpuLoadBtn"><i class="fa-solid fa-download"></i> Load</button>
+          <button class="btn btn-danger" id="wgpuUnloadBtn" disabled><i class="fa-regular fa-trash-can"></i> Unload</button>
+        </div>
+      </header>
+
+      <div class="webgpu-panel">
+        <div class="webgpu-status" id="wgpuStatus">
+          <div class="webgpu-status-row">
+            <span class="webgpu-status-label">Status</span>
+            <span class="webgpu-status-value" id="wgpuStatusText">Checking WebGPU support…</span>
+          </div>
+          <div class="webgpu-status-row">
+            <span class="webgpu-status-label">Model</span>
+            <span class="webgpu-status-value" id="wgpuStatusModel">none</span>
+          </div>
+          <div class="webgpu-status-row">
+            <span class="webgpu-status-label">Progress</span>
+            <div class="webgpu-progress"><div class="webgpu-progress-bar" id="wgpuProgressBar" style="width:0%"></div></div>
+            <span class="webgpu-status-value" id="wgpuProgressText" style="min-width:60px;text-align:right;">—</span>
+          </div>
+        </div>
+
+        <div class="webgpu-messages" id="wgpuMessages">
+          <div class="empty">
+            <h2 class="empty-title">Runs 100% in your browser</h2>
+            <p class="empty-text">
+              We ship two pre-vetted ONNX models that <em>actually load</em> in transformers.js v3:<br/>
+              · <code>Llama-3.2-1B-Instruct-q4f16</code> — general / uncensored-ish<br/>
+              · <code>Qwen2.5-Coder-0.5B-Instruct</code> — code &amp; agentic<br/>
+              No keys, no network calls during inference, no credit usage. Click <strong>Load</strong> to download weights (cached after first run).<br/>
+              <small style="color:var(--ink-faint)">Requires Chrome 113+, Edge, or Firefox Nightly. WASM works on any browser, just slower.</small>
+            </p>
+          </div>
+        </div>
+
+        <div class="webgpu-composer">
+          <textarea id="wgpuInput" rows="2" placeholder="Load a model first, then type here…" disabled></textarea>
+          <button class="btn btn-primary" id="wgpuSendBtn" disabled><i class="fa-solid fa-paper-plane"></i> Send</button>
+          <button class="btn btn-danger" id="wgpuStopBtn" disabled><i class="fa-solid fa-stop"></i> Stop</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TRANSLATE ============ -->
+    <section class="view" id="view-translate" aria-label="Translate">
+      <header class="view-header">
+        <h1 class="view-title"><small>DeepL</small>Translate</h1>
+      </header>
+      <div class="translate-panel">
+        <div class="translate-row">
+          <div class="field">
+            <label>Source</label>
+            <select id="translateSource">
+              <option value="">Auto-detect</option>
+              <option value="EN">English</option><option value="ES">Spanish</option>
+              <option value="FR">French</option><option value="DE">German</option>
+              <option value="IT">Italian</option><option value="PT">Portuguese</option>
+              <option value="JA">Japanese</option><option value="KO">Korean</option>
+              <option value="ZH">Chinese</option><option value="RU">Russian</option>
+              <option value="AR">Arabic</option><option value="HI">Hindi</option>
+            </select>
+          </div>
+          <i class="fa-solid fa-arrow-right translate-arrow"></i>
+          <div class="field">
+            <label>Target</label>
+            <select id="translateTarget">
+              <option value="EN-US">English (US)</option><option value="EN-GB">English (UK)</option>
+              <option value="ES">Spanish</option><option value="FR">French</option>
+              <option value="DE">German</option><option value="IT">Italian</option>
+              <option value="PT-PT">Portuguese</option><option value="PT-BR">Portuguese (BR)</option>
+              <option value="JA">Japanese</option><option value="KO">Korean</option>
+              <option value="ZH">Chinese</option><option value="RU">Russian</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="translateBtn"><i class="fa-solid fa-language"></i> Translate</button>
+        </div>
+        <div class="translate-grid">
+          <textarea id="translateInput" placeholder="Type or paste text to translate…"></textarea>
+          <textarea id="translateOutput" placeholder="Translation will appear here." readonly></textarea>
+        </div>
+        <p class="help">Powered by DeepL. Add your API key in Settings (free tier = 500k chars/month).</p>
+      </div>
+    </section>
+
+    <!-- ============ PROMPTS ============ -->
+    <section class="view" id="view-prompts" aria-label="Prompt Library">
+      <header class="view-header">
+        <h1 class="view-title"><small>Library</small>Prompts</h1>
+        <div class="view-controls">
+          <button class="btn btn-primary" id="newPromptBtn"><i class="fa-solid fa-plus"></i> New prompt</button>
+        </div>
+      </header>
+      <div class="prompts-panel">
+        <div class="prompts-section">
+          <h2>Built-in presets</h2>
+          <div class="prompt-grid" id="builtinPromptGrid"></div>
+        </div>
+        <div class="prompts-section">
+          <h2>Your library</h2>
+          <div class="prompt-grid" id="userPromptGrid"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FILES ============ -->
+    <section class="view" id="view-files" aria-label="Files">
+      <header class="view-header">
+        <h1 class="view-title"><small>Workspace</small>Files</h1>
+        <div class="view-controls">
+          <button class="btn btn-icon" id="fsRefreshBtn" title="Refresh"><i class="fa-solid fa-rotate"></i></button>
+          <button class="btn" id="fsNewFileBtn"><i class="fa-regular fa-file"></i> New file</button>
+          <button class="btn" id="fsNewFolderBtn"><i class="fa-regular fa-folder"></i> New folder</button>
+          <button class="btn btn-primary" id="fsSaveBtn" disabled><i class="fa-regular fa-floppy-disk"></i> Save</button>
+        </div>
+      </header>
+      <div class="files-layout">
+        <div class="file-tree">
+          <div class="file-tree-path" id="fileTreePath">/</div>
+          <div id="fileTreeItems"></div>
+        </div>
+        <div class="editor-wrap">
+          <div class="editor-tabs" id="editorTabs">
+            <div class="editor-empty">No file open.</div>
+          </div>
+          <textarea id="editorTextarea" class="editor-area" spellcheck="false" placeholder="Pick a file from the tree…"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TERMINAL ============ -->
+    <section class="view" id="view-terminal" aria-label="Terminal">
+      <header class="view-header">
+        <h1 class="view-title"><small>Shell</small>Terminal</h1>
+        <div class="view-controls">
+          <button class="btn" id="termClearBtn"><i class="fa-regular fa-trash-can"></i> Clear</button>
+        </div>
+      </header>
+      <div class="terminal-panel">
+        <div class="terminal-output" id="termOutput"></div>
+        <div class="terminal-input">
+          <span class="prompt">&gt;</span>
+          <input type="text" id="termInput" placeholder="Enter a command… (↑/↓ for history)" autocomplete="off" spellcheck="false" />
+          <button class="btn btn-primary" id="termRunBtn"><i class="fa-solid fa-play"></i></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ GALLERY ============ -->
+    <section class="view" id="view-gallery" aria-label="Gallery">
+      <header class="view-header">
+        <h1 class="view-title"><small>Output</small>Gallery</h1>
+        <div class="view-controls">
+          <button class="btn btn-icon" id="galleryRefreshBtn"><i class="fa-solid fa-rotate"></i></button>
+          <button class="btn btn-danger" id="galleryClearBtn"><i class="fa-regular fa-trash-can"></i> Clear</button>
+        </div>
+      </header>
+      <div class="gallery-grid" id="galleryGrid"></div>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section class="view" id="view-settings" aria-label="Settings">
+      <header class="view-header">
+        <h1 class="view-title"><small>Configuration</small>Settings</h1>
+      </header>
+
+      <div class="settings-panel">
+        <div class="settings-section">
+          <h2>Defaults</h2>
+          <p class="help">Applied to new chats.</p>
+          <div class="settings-row">
+            <label class="toggle-label">
+              <input type="checkbox" id="streamEnabledSetting" />
+              <span>Stream responses</span>
+            </label>
+            <label class="toggle-label">
+              <input type="checkbox" id="webSearchEnabledSetting" />
+              <span>Enable web search by default</span>
+            </label>
+            <label class="toggle-label">
+              <input type="checkbox" id="uncensoredDefaultSetting" />
+              <span>Prefer uncensored models</span>
+            </label>
+            <div class="field" style="max-width:200px;">
+              <label>Search results / query</label>
+              <select id="webSearchResultsSetting">
+                <option value="3">3</option>
+                <option value="5" selected>5</option>
+                <option value="8">8</option>
+                <option value="10">10</option>
+              </select>
+            </div>
+            <div class="field" style="max-width:320px;">
+              <label>Default temperature <span id="defaultTempVal">0.7</span></label>
+              <input type="range" id="defaultTempSetting" min="0" max="2" step="0.1" value="0.7" />
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h2>API keys</h2>
+          <p class="help">
+            <i class="fa-solid fa-circle-check ok"></i> <strong>Free</strong> · no key.
+            <i class="fa-solid fa-circle-info accent"></i> <strong>Free tier</strong> · free signup.
+            <i class="fa-solid fa-fire accent"></i> <strong>Uncensored options</strong> available.
+            Keys live in <code>config.json</code> on this machine.
+          </p>
+          <div class="keys-grid" id="keysGrid"></div>
+        </div>
+
+        <div class="settings-section">
+          <h2>Workspace</h2>
+          <p class="help">Where the agent, Files and Terminal operate.</p>
+          <div class="workspace-row">
+            <input type="text" id="workspaceInput" spellcheck="false" placeholder="/absolute/path or ~/myproject" />
+            <button class="btn btn-primary" id="saveWorkspaceBtn">Save</button>
+            <button class="btn" id="workspaceFavoriteBtn"><i class="fa-regular fa-star"></i> Favorite</button>
+          </div>
+          <div class="workspace-section">
+            <h4>Favorites</h4>
+            <div id="workspaceFavorites" class="workspace-buttons"></div>
+          </div>
+          <div class="workspace-section">
+            <h4>Recent</h4>
+            <div id="workspaceHistory" class="workspace-buttons"></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h2>Appearance</h2>
+          <div class="theme-toggle">
+            <button class="btn theme-opt" data-theme="paper"><i class="fa-regular fa-sun"></i> Paper</button>
+            <button class="btn theme-opt" data-theme="dark"><i class="fa-regular fa-moon"></i> Dark</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h2>Keyboard shortcuts</h2>
+          <div class="shortcuts">
+            <div><kbd>Ctrl</kbd>+<kbd>N</kbd> <span>New chat</span></div>
+            <div><kbd>Ctrl</kbd>+<kbd>K</kbd> <span>Focus input</span></div>
+            <div><kbd>Ctrl</kbd>+<kbd>,</kbd> <span>Settings</span></div>
+            <div><kbd>Ctrl</kbd>+<kbd>1..6</kbd> <span>Jump to view</span></div>
+            <div><kbd>Enter</kbd> <span>Send</span></div>
+            <div><kbd>Shift</kbd>+<kbd>Enter</kbd> <span>New line</span></div>
+            <div><kbd>Esc</kbd> <span>Close modal</span></div>
+            <div><kbd>/image</kbd> <span>Generate image in chat</span></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h2>About</h2>
+          <p class="help">
+            GoatAI v1 · Flask + vanilla JS · runs on <strong id="aboutPlatform">local</strong>. Keys never leave this machine.
+            Free, keyless providers: <strong>Pollinations · LLM7 · DuckDuckGo AI</strong>.
+            Local in-browser inference via <code>@huggingface/transformers</code>.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ MODALS ============ -->
+  <div class="modal-backdrop" id="sysModal" hidden data-modal>
+    <div class="modal" role="dialog">
+      <div class="modal-header">
+        <h3>System prompt</h3>
+        <button class="toolbar-btn modal-dismiss"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <textarea id="sysModalText" placeholder="Describe how the assistant should behave…"></textarea>
+      <div class="modal-row">
+        <select id="sysModalPromptPicker"><option value="">Insert from library…</option></select>
+        <button class="btn" id="sysModalSaveToLibrary"><i class="fa-regular fa-bookmark"></i> Save to library</button>
+      </div>
+      <div class="modal-footer">
+        <button class="btn modal-dismiss">Cancel</button>
+        <button class="btn btn-primary" id="sysModalSave">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="promptModal" hidden data-modal>
+    <div class="modal" role="dialog">
+      <div class="modal-header">
+        <h3 id="promptModalTitle">Edit prompt</h3>
+        <button class="toolbar-btn modal-dismiss"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <label>Name</label>
+        <input type="text" id="promptModalName" placeholder="My helpful assistant" />
+        <label style="margin-top:10px;">Body</label>
+        <textarea id="promptModalBody" placeholder="Prompt body…" rows="8"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="promptModalDelete" hidden>Delete</button>
+        <div style="flex:1;"></div>
+        <button class="btn modal-dismiss">Cancel</button>
+        <button class="btn btn-primary" id="promptModalSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="confirmModal" hidden data-modal>
+    <div class="modal confirm">
+      <div class="modal-header">
+        <h3 id="confirmTitle">Confirm</h3>
+        <button class="toolbar-btn modal-dismiss"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <p id="confirmText" class="modal-body"></p>
+      <div class="modal-footer">
+        <button class="btn modal-dismiss">Cancel</button>
+        <button class="btn btn-danger" id="confirmOk">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="promptTextModal" hidden data-modal>
+    <div class="modal confirm">
+      <div class="modal-header">
+        <h3 id="promptTextTitle">Enter value</h3>
+        <button class="toolbar-btn modal-dismiss"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <p id="promptTextLabel" class="modal-body"></p>
+      <div class="modal-body" style="padding-top:0;">
+        <input type="text" id="promptTextInput" style="width:100%;" />
+      </div>
+      <div class="modal-footer">
+        <button class="btn modal-dismiss">Cancel</button>
+        <button class="btn btn-primary" id="promptTextOk">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>

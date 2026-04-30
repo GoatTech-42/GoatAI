@@ -1,0 +1,13 @@
+[project]
+name = "goatai-api-chat"
+version = "1.0.0"
+description = "GoatAI API Chat Flask app for Vercel deployment"
+
+[tool.vercel]
+# Vercel Python entrypoint
+entrypoint = "app:app"
+
+[tool.poetry.dependencies]
+python = ">=3.8"
+flask = "*"
+requests = "*"
