@@ -1503,21 +1503,39 @@ def static_files(path):
 # ---------------------------------------------------------------------------
 # /api/config  — returns static metadata only (no server-side keys)
 # ---------------------------------------------------------------------------
-@app.route("/api/config", methods=["GET", "OPTIONS"])
+@app.route("/api/config", methods=["GET", "POST", "OPTIONS"])
 def api_config():
     if request.method == "OPTIONS":
         return "", 204
-    # Client sends its own config; we just return static metadata
-    p = request.get_json(silent=True) or {}
-    return jsonify({
-        "providers": _providers_payload(p),
-        "system_prompts": SYSTEM_PROMPTS,
-        "vision_models": {k: list(v) for k, v in VISION_MODELS.items()},
-        "tool_models":   {k: list(v) for k, v in TOOL_CALL_MODELS.items()},
-        "uncensored_models": {k: list(v) for k, v in UNCENSORED_MODELS.items()},
-        "version": APP_VERSION,
-        "platform": "vercel",
-    })
+    # Client sends its own config (POST) or just hits with GET — both work.
+    try:
+        p = request.get_json(silent=True) or {}
+    except Exception:
+        p = {}
+    try:
+        return jsonify({
+            "providers": _providers_payload(p),
+            "system_prompts": SYSTEM_PROMPTS,
+            "vision_models": {k: list(v) for k, v in VISION_MODELS.items()},
+            "tool_models":   {k: list(v) for k, v in TOOL_CALL_MODELS.items()},
+            "uncensored_models": {k: list(v) for k, v in UNCENSORED_MODELS.items()},
+            "version": APP_VERSION,
+            "platform": "vercel",
+        })
+    except Exception as e:
+        # Never let /api/config 500 — frontend depends on it for boot.
+        traceback.print_exc()
+        return jsonify({
+            "providers": {pid: {**PROVIDERS.get(pid, {}), "active": pid in FREE_PROVIDERS}
+                          for pid in PROVIDER_IDS},
+            "system_prompts": SYSTEM_PROMPTS,
+            "vision_models": {k: list(v) for k, v in VISION_MODELS.items()},
+            "tool_models":   {k: list(v) for k, v in TOOL_CALL_MODELS.items()},
+            "uncensored_models": {k: list(v) for k, v in UNCENSORED_MODELS.items()},
+            "version": APP_VERSION,
+            "platform": "vercel",
+            "warning": f"degraded: {e}",
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -1527,29 +1545,45 @@ def api_config():
 def api_provider_models(provider):
     if request.method == "OPTIONS": return "", 204
     if provider not in PROVIDERS: return _error_response(404, "Unknown provider")
-    p = request.get_json(silent=True) or {}
-    meta = PROVIDERS[provider]
-    dynamic = []
-    if not meta.get("local") and provider not in FREE_PROVIDERS:
-        key = _req_key(p, provider)
-        if key:
-            try:
-                if provider == "anthropic":
-                    dynamic = _fetch_anthropic_models(key)
-                elif provider == "google":
-                    dynamic = _fetch_google_models(key)
-                elif provider == "cohere":
-                    dynamic = _fetch_cohere_models(key)
-                elif provider in OPENAI_COMPAT_BASE:
-                    or_cfg = _req_provider_cfg(p, "openrouter") if provider == "openrouter" else None
-                    dynamic = _fetch_openai_compat_models(provider, key, or_cfg)
-            except Exception as e:
-                print(f"[models] {provider}: {e}")
-    catalog = _merge_model_catalog(provider, dynamic)
-    return jsonify({"models": catalog,
-                    "vision": list(VISION_MODELS.get(provider, [])),
-                    "tools":  list(TOOL_CALL_MODELS.get(provider, [])),
-                    "uncensored": list(UNCENSORED_MODELS.get(provider, []))})
+    try:
+        p = request.get_json(silent=True) or {}
+    except Exception:
+        p = {}
+    try:
+        meta = PROVIDERS[provider]
+        dynamic = []
+        if not meta.get("local") and provider not in FREE_PROVIDERS:
+            key = _req_key(p, provider)
+            if key:
+                try:
+                    if provider == "anthropic":
+                        dynamic = _fetch_anthropic_models(key)
+                    elif provider == "google":
+                        dynamic = _fetch_google_models(key)
+                    elif provider == "cohere":
+                        dynamic = _fetch_cohere_models(key)
+                    elif provider in OPENAI_COMPAT_BASE:
+                        or_cfg = _req_provider_cfg(p, "openrouter") if provider == "openrouter" else None
+                        dynamic = _fetch_openai_compat_models(provider, key, or_cfg)
+                except Exception as e:
+                    print(f"[models] {provider}: {e}")
+        catalog = _merge_model_catalog(provider, dynamic)
+        return jsonify({"models": catalog,
+                        "vision": list(VISION_MODELS.get(provider, [])),
+                        "tools":  list(TOOL_CALL_MODELS.get(provider, [])),
+                        "uncensored": list(UNCENSORED_MODELS.get(provider, []))})
+    except Exception as e:
+        # Never 500 — return the static catalog so the frontend can still boot.
+        traceback.print_exc()
+        try:
+            catalog = _merge_model_catalog(provider, [])
+        except Exception:
+            catalog = {}
+        return jsonify({"models": catalog,
+                        "vision": list(VISION_MODELS.get(provider, [])),
+                        "tools":  list(TOOL_CALL_MODELS.get(provider, [])),
+                        "uncensored": list(UNCENSORED_MODELS.get(provider, [])),
+                        "warning": f"degraded: {e}"})
 
 
 # ---------------------------------------------------------------------------

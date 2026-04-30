@@ -339,31 +339,46 @@ function promptModal(label, defaultValue='') {
 //  INIT
 // ============================================================
 async function init() {
-  bindGlobalEvents();
-  bindModalDismiss();
-  bindNav();
-  bindShortcuts();
+  // Each step is wrapped — a single failure can never leave the page broken
+  // (and can never leave a modal stuck open).
+  const safe = async (label, fn) => {
+    try { await fn(); }
+    catch (e) {
+      console.error(`[init:${label}]`, e);
+    }
+  };
 
-  await loadConfig();
-  await loadProvidersAndModels();
-  await loadPrompts();
-  await loadChats();
+  // Make sure every modal starts hidden (defensive — in case stale state leaks in).
+  closeAllModals();
 
-  bindChat();
-  bindImage();
-  bindAudio();
-  bindAgent();
-  bindWebGPU();
-  bindTranslate();
-  bindFiles();
-  bindTerminal();
-  bindGallery();
-  bindSettings();
-  bindPromptsView();
+  await safe('bindGlobalEvents',  () => bindGlobalEvents());
+  await safe('bindModalDismiss',  () => bindModalDismiss());
+  await safe('bindNav',           () => bindNav());
+  await safe('bindShortcuts',     () => bindShortcuts());
 
-  applyTheme(state.config.theme || 'dark');
-  newChat();   // start with a blank chat
-  refreshSidebarWorkspace();
+  await safe('loadConfig',             () => loadConfig());
+  await safe('loadProvidersAndModels', () => loadProvidersAndModels());
+  await safe('loadPrompts',            () => loadPrompts());
+  await safe('loadChats',              () => loadChats());
+
+  await safe('bindChat',         () => bindChat());
+  await safe('bindImage',        () => bindImage());
+  await safe('bindAudio',        () => bindAudio());
+  await safe('bindAgent',        () => bindAgent());
+  await safe('bindWebGPU',       () => bindWebGPU());
+  await safe('bindTranslate',    () => bindTranslate());
+  await safe('bindFiles',        () => bindFiles());
+  await safe('bindTerminal',     () => bindTerminal());
+  await safe('bindGallery',      () => bindGallery());
+  await safe('bindSettings',     () => bindSettings());
+  await safe('bindPromptsView',  () => bindPromptsView());
+
+  await safe('applyTheme', () => applyTheme((state.config && state.config.theme) || 'dark'));
+  await safe('newChat',    () => newChat());
+  await safe('refreshSidebarWorkspace', () => refreshSidebarWorkspace());
+
+  // Final safety net: make sure NOTHING was left as a stuck modal during init.
+  closeAllModals();
 }
 
 // ----- Global -----
@@ -374,13 +389,25 @@ function bindGlobalEvents() {
 }
 
 function bindModalDismiss() {
-  // Click backdrop = close
-  $$('.modal-backdrop[data-modal]').forEach((bd) => {
-    bd.addEventListener('click', (e) => {
-      if (e.target === bd) bd.setAttribute('hidden', '');
-    });
-    bd.querySelectorAll('.modal-dismiss').forEach(b => b.addEventListener('click', () => bd.setAttribute('hidden', '')));
-  });
+  // Use event delegation on document so dismiss ALWAYS works — even if a
+  // modal's inner handler is overwritten by promptModal/confirmModal.
+  document.addEventListener('click', (e) => {
+    const target = e.target;
+    if (!target || !target.closest) return;
+
+    // Click on backdrop itself (not inside the modal content) → close.
+    if (target.classList && target.classList.contains('modal-backdrop') && target.hasAttribute('data-modal')) {
+      target.setAttribute('hidden', '');
+      return;
+    }
+
+    // Click on any .modal-dismiss button → close its parent modal.
+    const dismiss = target.closest('.modal-dismiss');
+    if (dismiss) {
+      const bd = dismiss.closest('.modal-backdrop[data-modal]');
+      if (bd) bd.setAttribute('hidden', '');
+    }
+  }, true);
 }
 
 function bindNav() {
@@ -420,22 +447,84 @@ function bindShortcuts() {
 // ============================================================
 //  CONFIG / PROVIDERS / MODELS
 // ============================================================
+// ── Static fallback provider metadata so the UI can still boot even if /api/config fails.
+//    Keep this in sync with PROVIDERS in app.py (only the basics needed to render the UI).
+const FALLBACK_PROVIDERS = {
+  pollinations:   { name: 'Pollinations',    short: 'pol', color: '#1f8f62', capabilities: ['chat','image','tts'], free: true,      description: 'Free, anonymous.' },
+  llm7:           { name: 'LLM7.io',         short: 'l7',  color: '#9333ea', capabilities: ['chat'],                free: true,      description: 'Free OpenAI-compatible gateway.' },
+  duckduckgo:     { name: 'DuckDuckGo AI',   short: 'ddg', color: '#de5833', capabilities: ['chat'],                free: true,      description: 'Private, free.' },
+  cerebras:       { name: 'Cerebras',        short: 'crb', color: '#ff4a4a', capabilities: ['chat'],                free_tier: true, description: 'Ultra-fast LPU inference.', key_hint: 'csk-…' },
+  groq:           { name: 'Groq',            short: 'grq', color: '#f55036', capabilities: ['chat','stt'],          free_tier: true, description: 'LPU speed.', key_hint: 'gsk_…' },
+  google:         { name: 'Google Gemini',   short: 'ggl', color: '#4285f4', capabilities: ['chat'],                free_tier: true, description: 'Gemini 2.5.', key_hint: 'AIza…' },
+  github_models:  { name: 'GitHub Models',   short: 'gh',  color: '#24292f', capabilities: ['chat'],                free_tier: true, description: 'Free with any GitHub account.', key_hint: 'ghp_…' },
+  nvidia_nim:     { name: 'NVIDIA NIM',      short: 'nv',  color: '#76b900', capabilities: ['chat','image'],        free_tier: true, description: 'DeepSeek, Nemotron, Llama 4.', key_hint: 'nvapi-…' },
+  siliconflow:    { name: 'SiliconFlow',     short: 'sf',  color: '#0ea5e9', capabilities: ['chat','image'],        free_tier: true, description: 'Chinese open-source models.', key_hint: 'sk-…' },
+  cloudflare:     { name: 'Cloudflare AI',   short: 'cf',  color: '#f38020', capabilities: ['chat','image'],        free_tier: true, description: 'Workers AI.', key_hint: 'token' },
+  mistral:        { name: 'Mistral',         short: 'ms',  color: '#fa520f', capabilities: ['chat'],                free_tier: true, description: 'Mistral models.', key_hint: 'sk-…' },
+  huggingface:    { name: 'Hugging Face',    short: 'hf',  color: '#ffcc4d', capabilities: ['chat'],                free_tier: true, description: 'Inference API.', key_hint: 'hf_…' },
+  openai:         { name: 'OpenAI',          short: 'oai', color: '#10a37f', capabilities: ['chat','image','tts','stt'], description: 'GPT models.', key_hint: 'sk-…' },
+  anthropic:      { name: 'Anthropic',       short: 'ant', color: '#c96442', capabilities: ['chat'],                description: 'Claude.', key_hint: 'sk-ant-…' },
+  xai:            { name: 'xAI',             short: 'xai', color: '#000000', capabilities: ['chat'],                description: 'Grok.', key_hint: 'xai-…' },
+  deepseek:       { name: 'DeepSeek',        short: 'ds',  color: '#4d6bfe', capabilities: ['chat'],                description: 'DeepSeek models.', key_hint: 'sk-…' },
+  openrouter:     { name: 'OpenRouter',      short: 'or',  color: '#6366f1', capabilities: ['chat'],                description: 'Multi-provider gateway.', key_hint: 'sk-or-…' },
+  together:       { name: 'Together AI',     short: 'tog', color: '#0f172a', capabilities: ['chat','image'],        description: 'Open models.', key_hint: 'tok-…' },
+  fireworks:      { name: 'Fireworks',       short: 'fw',  color: '#dc2626', capabilities: ['chat'],                description: 'Fast open models.', key_hint: 'fw-…' },
+  perplexity:     { name: 'Perplexity',      short: 'pplx',color: '#1e3a5f', capabilities: ['chat'],                description: 'Sonar models.', key_hint: 'pplx-…' },
+  cohere:         { name: 'Cohere',          short: 'co',  color: '#39594d', capabilities: ['chat'],                description: 'Command models.', key_hint: 'co-…' },
+  anyscale:       { name: 'Anyscale',        short: 'as',  color: '#0070f3', capabilities: ['chat'],                description: 'Llama / Mixtral.', key_hint: 'esecret-…' },
+  replicate:      { name: 'Replicate',       short: 'rep', color: '#000000', capabilities: ['image'],               description: 'Image models.', key_hint: 'r8_…' },
+  stability:      { name: 'Stability AI',    short: 'sai', color: '#ec4899', capabilities: ['image'],               description: 'Stable Diffusion.', key_hint: 'sk-…' },
+  elevenlabs:     { name: 'ElevenLabs',      short: 'el',  color: '#000000', capabilities: ['tts','stt'],           description: 'Voice synthesis.', key_hint: 'sk_…' },
+  deepl:          { name: 'DeepL',           short: 'dl',  color: '#0f2b46', capabilities: [],                       description: 'Translation.', key_hint: 'key' },
+  webgpu:         { name: 'Local WebGPU',    short: 'wg',  color: '#7c3aed', capabilities: ['chat'],                local: true,     description: 'Runs in your browser.' },
+};
+
+function _toMetaWithActive(providers, cfg) {
+  const out = {};
+  const apiKeys = (cfg && cfg.api_keys) || {};
+  const providerCfg = (cfg && cfg.provider_config) || {};
+  for (const [pid, meta] of Object.entries(providers || {})) {
+    let active = !!meta.free;
+    if (!active) {
+      const k = (apiKeys[pid] || '').trim();
+      if (pid === 'cloudflare') active = !!(k && providerCfg.cloudflare?.account_id);
+      else                      active = !!k;
+    }
+    out[pid] = Object.assign({}, meta, { active });
+  }
+  return out;
+}
+
 async function loadConfig() {
   // Load user prefs from localStorage
   state.config = LS.getConfig();
   state.theme = state.config.theme || 'dark';
 
+  // Always seed defaults FIRST so a failed /api/config can never leave the UI broken.
+  state.providers       = state.providers       && Object.keys(state.providers).length       ? state.providers       : _toMetaWithActive(FALLBACK_PROVIDERS, state.config);
+  state.systemPrompts   = state.systemPrompts   || { general: 'You are a helpful assistant.', image_prompt: 'You are an expert image-prompt writer.' };
+  state.visionModels    = state.visionModels    || {};
+  state.toolModels      = state.toolModels      || {};
+  state.uncensoredModels= state.uncensoredModels|| {};
+
   // Load static metadata from server (providers, system prompts, model categories)
-  const r = await API.config();
-  if (r.ok) {
-    state.providers = r.data.providers || {};
-    state.systemPrompts = r.data.system_prompts || {};
+  let r;
+  try { r = await API.config(); }
+  catch (e) { r = { ok: false, error: { type: 'network', message: e.message || String(e) } }; }
+
+  if (r && r.ok && r.data) {
+    state.providers = r.data.providers && Object.keys(r.data.providers).length
+      ? r.data.providers
+      : _toMetaWithActive(FALLBACK_PROVIDERS, state.config);
+    state.systemPrompts = r.data.system_prompts || state.systemPrompts;
     state.visionModels = r.data.vision_models || {};
     state.toolModels = r.data.tool_models || {};
     state.uncensoredModels = r.data.uncensored_models || {};
     if ($('aboutPlatform')) $('aboutPlatform').textContent = r.data.platform || 'vercel';
   } else {
-    toast(`Could not reach server: ${describeError(r.error)}`, 'error');
+    // Server unreachable — keep working with built-in fallback metadata.
+    console.warn('[loadConfig] /api/config failed, using fallback providers:', r && r.error);
+    toast(`Server metadata unavailable — using offline defaults. ${describeError(r && r.error)}`, 'info');
   }
 
   // Populate settings UI from localStorage config
@@ -448,9 +537,9 @@ async function loadConfig() {
   if ($('chatTemperatureVal')) $('chatTemperatureVal').textContent = (+state.config.default_temperature || 0.7).toFixed(1);
   if ($('workspaceInput')) $('workspaceInput').value = '';  // workspace N/A in serverless
   state.webSearchOn = !!state.config.web_search_enabled;
-  applyToolbarBadges();
-  renderKeysGrid();
-  renderWorkspaceLists();
+  try { applyToolbarBadges(); }    catch (e) { console.warn('[loadConfig] applyToolbarBadges:', e); }
+  try { renderKeysGrid(); }        catch (e) { console.warn('[loadConfig] renderKeysGrid:', e); }
+  try { renderWorkspaceLists(); }  catch (e) { console.warn('[loadConfig] renderWorkspaceLists:', e); }
 }
 
 async function loadProvidersAndModels() {
