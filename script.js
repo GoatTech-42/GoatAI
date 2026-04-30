@@ -299,7 +299,13 @@ function toast(msg, kind='info', ms=3200) {
 // ----- Modal helpers -----
 function openModal(id) { const el = $(id); if (el) el.removeAttribute('hidden'); }
 function closeModal(id) { const el = $(id); if (el) el.setAttribute('hidden', ''); }
-function closeAllModals() { $$('.modal-backdrop[data-modal]').forEach(m => m.setAttribute('hidden', '')); }
+function closeAllModals() {
+  // If a promptModal Promise is still pending, resolve it as cancelled so the
+  // caller never gets stuck on `await promptModal(...)` and the dialog can
+  // be reopened cleanly later.
+  try { if (typeof _resolveActivePromptModal === 'function') _resolveActivePromptModal(null); } catch (_) {}
+  $$('.modal-backdrop[data-modal]').forEach(m => m.setAttribute('hidden', ''));
+}
 
 function confirmModal(text, { okText='Confirm', danger=false }={}) {
   return new Promise((resolve) => {
@@ -318,19 +324,55 @@ function confirmModal(text, { okText='Confirm', danger=false }={}) {
   });
 }
 
+// Track the active prompt-modal resolver so that ANY close path (Esc, backdrop
+// click, dismiss button, programmatic closeAllModals) cleanly resolves the
+// pending Promise instead of leaving the dialog half-wired.
+let _activePromptModalResolve = null;
+
+function _resolveActivePromptModal(val) {
+  const fn = _activePromptModalResolve;
+  _activePromptModalResolve = null;
+  if (typeof fn === 'function') {
+    try { fn(val); } catch (_) {}
+  }
+}
+
 function promptModal(label, defaultValue='') {
   return new Promise((resolve) => {
+    // If a previous prompt is still open (e.g. its caller threw), resolve it
+    // first so we never have two stacked instances fighting over the DOM.
+    if (_activePromptModalResolve) _resolveActivePromptModal(null);
+
+    const modal = $('promptTextModal');
+    const inp   = $('promptTextInput');
+    const okBtn = $('promptTextOk');
+    if (!modal || !inp || !okBtn) { resolve(null); return; }
+
     $('promptTextLabel').textContent = label;
-    const inp = $('promptTextInput');
     inp.value = defaultValue;
+
+    const cleanup = (val) => {
+      _activePromptModalResolve = null;
+      // Detach handlers so a stale instance can never block a future one.
+      okBtn.onclick = null;
+      inp.onkeydown = null;
+      modal.onclick = null;
+      $$('#promptTextModal .modal-dismiss').forEach(b => { b.onclick = null; });
+      closeModal('promptTextModal');
+      resolve(val);
+    };
+
+    _activePromptModalResolve = cleanup;
     openModal('promptTextModal');
-    setTimeout(() => inp.focus(), 50);
-    const cleanup = (val) => { closeModal('promptTextModal'); resolve(val); };
-    $('promptTextOk').onclick = () => cleanup(inp.value);
+    setTimeout(() => { try { inp.focus(); inp.select(); } catch(_){} }, 50);
+
+    okBtn.onclick = () => cleanup(inp.value);
     $$('#promptTextModal .modal-dismiss').forEach(b => { b.onclick = () => cleanup(null); });
+    // Clicking the backdrop (outside the dialog) also cancels.
+    modal.onclick = (e) => { if (e.target === modal) cleanup(null); };
     inp.onkeydown = (e) => {
-      if (e.key === 'Enter') cleanup(inp.value);
-      if (e.key === 'Escape') cleanup(null);
+      if (e.key === 'Enter')  { e.preventDefault(); cleanup(inp.value); }
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
     };
   });
 }
