@@ -301,17 +301,8 @@ function openModal(id) { const el = $(id); if (el) el.removeAttribute('hidden');
 function closeModal(id) {
   const el = $(id);
   if (el) el.setAttribute('hidden', '');
-  // If we're closing the prompt-text modal, ALWAYS resolve any pending Promise
-  // so the dialog can never end up half-closed (DOM hidden but resolver alive).
-  if (id === 'promptTextModal') {
-    try { _resolveActivePromptModal(null); } catch (_) {}
-  }
 }
 function closeAllModals() {
-  // If a promptModal Promise is still pending, resolve it as cancelled so the
-  // caller never gets stuck on `await promptModal(...)` and the dialog can
-  // be reopened cleanly later.
-  try { if (typeof _resolveActivePromptModal === 'function') _resolveActivePromptModal(null); } catch (_) {}
   $$('.modal-backdrop[data-modal]').forEach(m => m.setAttribute('hidden', ''));
 }
 
@@ -332,62 +323,29 @@ function confirmModal(text, { okText='Confirm', danger=false }={}) {
   });
 }
 
-// Track the active prompt-modal resolver so that ANY close path (Esc, backdrop
-// click, dismiss button, programmatic closeAllModals) cleanly resolves the
-// pending Promise instead of leaving the dialog half-wired.
-let _activePromptModalResolve = null;
-
-function _resolveActivePromptModal(val) {
-  const fn = _activePromptModalResolve;
-  _activePromptModalResolve = null;
-  if (typeof fn === 'function') {
-    try { fn(val); } catch (_) {}
-  }
-}
-
+// promptModal — REDESIGNED. The custom HTML "Enter value" dialog was getting
+// stuck unclosable in the wild, so we now use the browser's native prompt()
+// which is 100% guaranteed to be dismissable. We also nuke the legacy
+// #promptTextModal element from the DOM at startup so it can never reappear.
 function promptModal(label, defaultValue='') {
   return new Promise((resolve) => {
-    // If a previous prompt is still open (e.g. its caller threw), resolve it
-    // first so we never have two stacked instances fighting over the DOM.
-    if (_activePromptModalResolve) _resolveActivePromptModal(null);
-
-    const modal = $('promptTextModal');
-    const inp   = $('promptTextInput');
-    const okBtn = $('promptTextOk');
-    if (!modal || !inp || !okBtn) { resolve(null); return; }
-
-    $('promptTextLabel').textContent = label;
-    inp.value = defaultValue;
-
-    let done = false;
-    const cleanup = (val) => {
-      if (done) return;
-      done = true;
-      _activePromptModalResolve = null;
-      // Detach handlers so a stale instance can never block a future one.
-      okBtn.onclick = null;
-      inp.onkeydown = null;
-      modal.onclick = null;
-      $$('#promptTextModal .modal-dismiss').forEach(b => { b.onclick = null; });
-      // Force-hide the modal directly — bypasses any helper that might recurse.
-      modal.setAttribute('hidden', '');
-      resolve(val);
-    };
-
-    _activePromptModalResolve = cleanup;
-    openModal('promptTextModal');
-    setTimeout(() => { try { inp.focus(); inp.select(); } catch(_){} }, 50);
-
-    okBtn.onclick = () => cleanup(inp.value);
-    $$('#promptTextModal .modal-dismiss').forEach(b => { b.onclick = () => cleanup(null); });
-    // Clicking the backdrop (outside the dialog) also cancels.
-    modal.onclick = (e) => { if (e.target === modal) cleanup(null); };
-    inp.onkeydown = (e) => {
-      if (e.key === 'Enter')  { e.preventDefault(); cleanup(inp.value); }
-      if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
-    };
+    let val = null;
+    try { val = window.prompt(label, defaultValue || ''); } catch (_) { val = null; }
+    resolve(val);
   });
 }
+
+// Belt-and-suspenders: rip the legacy stuck modal out of the DOM entirely.
+function _nukeLegacyPromptModal() {
+  try {
+    const el = document.getElementById('promptTextModal');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  } catch (_) {}
+}
+// Run as early as possible AND on DOMContentLoaded — covers both fast and
+// slow-parse scenarios so the user never sees the stuck "Enter value" popup.
+_nukeLegacyPromptModal();
+document.addEventListener('DOMContentLoaded', _nukeLegacyPromptModal);
 
 // ============================================================
 //  INIT
@@ -439,12 +397,10 @@ async function init() {
 function bindGlobalEvents() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      // Force-hide every modal at the DOM level AND resolve any pending
-      // prompt-modal Promise. Belt + suspenders so nothing can ever get stuck.
-      try { _resolveActivePromptModal(null); } catch (_) {}
+      // Force-hide every modal at the DOM level. Capture-phase so nothing can stop it.
       $$('.modal-backdrop[data-modal]').forEach(m => m.setAttribute('hidden', ''));
     }
-  }, true); // capture-phase so nothing can stop it.
+  }, true);
 }
 
 function bindModalDismiss() {
@@ -456,13 +412,7 @@ function bindModalDismiss() {
 
     // Click on backdrop itself (not inside the modal content) → close.
     if (target.classList && target.classList.contains('modal-backdrop') && target.hasAttribute('data-modal')) {
-      const id = target.id;
       target.setAttribute('hidden', '');
-      // If this was the prompt-text modal, resolve its pending Promise so the
-      // caller doesn't hang and a stale resolver can't block the next open.
-      if (id === 'promptTextModal') {
-        try { _resolveActivePromptModal(null); } catch (_) {}
-      }
       return;
     }
 
@@ -470,13 +420,7 @@ function bindModalDismiss() {
     const dismiss = target.closest('.modal-dismiss');
     if (dismiss) {
       const bd = dismiss.closest('.modal-backdrop[data-modal]');
-      if (bd) {
-        const id = bd.id;
-        bd.setAttribute('hidden', '');
-        if (id === 'promptTextModal') {
-          try { _resolveActivePromptModal(null); } catch (_) {}
-        }
-      }
+      if (bd) bd.setAttribute('hidden', '');
     }
   }, true);
 }
