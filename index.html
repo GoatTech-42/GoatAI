@@ -22,7 +22,6 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310151c'/%3E%3Ctext x='50%25' y='44' font-family='Inter,Arial,sans-serif' font-weight='800' font-size='34' text-anchor='middle' fill='%23f5f1e6'%3EG%3C/text%3E%3Ccircle cx='48' cy='44' r='5' fill='%23ff7849'/%3E%3C/svg%3E" />
 </head>
 <body data-theme="dark">
-  ...existing code...
   <aside class="sidebar" id="sidebar">
     <div class="brand">
       <div class="brand-mark">
@@ -48,11 +47,7 @@
       <button class="nav-item" data-view="agent" title="Agent (Ctrl+4)">
         <i class="fa-solid fa-robot"></i><span>Agent</span>
       </button>
-      <button class="nav-item" data-view="webgpu" title="Local AI (Ctrl+5)">
-        <i class="fa-solid fa-microchip"></i><span>Local AI</span>
-        <span class="nav-badge">GPU</span>
-      </button>
-      <button class="nav-item" data-view="translate" title="Translate (Ctrl+6)">
+      <button class="nav-item" data-view="translate" title="Translate (Ctrl+5)">
         <i class="fa-solid fa-language"></i><span>Translate</span>
       </button>
       <button class="nav-item" data-view="prompts" title="Prompts">
@@ -169,8 +164,6 @@
         </div>
       </div>
     </section>
-
-    ...existing code...
           <section class="view" id="view-image" aria-label="Image">
         <header class="view-header">
           <h1 class="view-title"><small>Generation</small>Image</h1>
@@ -462,68 +455,6 @@
       </div>
     </section>
 
-    <!-- ============ WEBGPU ============ -->
-    <section class="view" id="view-webgpu" aria-label="Local WebGPU">
-      <header class="view-header">
-        <h1 class="view-title"><small>In-browser · no server</small>Local AI</h1>
-        <div class="view-controls">
-          <div class="field">
-            <label>Model</label>
-            <select id="wgpuModel">
-              <option value="onnx-community/Llama-3.2-1B-Instruct-q4f16" data-tag="general">Llama 3.2 1B · uncensored / general (~700MB)</option>
-              <option value="onnx-community/Qwen2.5-Coder-0.5B-Instruct" data-tag="coder">Qwen 2.5 Coder 0.5B · code &amp; agent (~400MB)</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Device</label>
-            <select id="wgpuDevice">
-              <option value="webgpu" selected>WebGPU</option>
-              <option value="wasm">WASM (CPU fallback)</option>
-            </select>
-          </div>
-          <button class="btn btn-primary" id="wgpuLoadBtn"><i class="fa-solid fa-download"></i> Load</button>
-          <button class="btn btn-danger" id="wgpuUnloadBtn" disabled><i class="fa-regular fa-trash-can"></i> Unload</button>
-        </div>
-      </header>
-
-      <div class="webgpu-panel">
-        <div class="webgpu-status" id="wgpuStatus">
-          <div class="webgpu-status-row">
-            <span class="webgpu-status-label">Status</span>
-            <span class="webgpu-status-value" id="wgpuStatusText">Checking WebGPU support…</span>
-          </div>
-          <div class="webgpu-status-row">
-            <span class="webgpu-status-label">Model</span>
-            <span class="webgpu-status-value" id="wgpuStatusModel">none</span>
-          </div>
-          <div class="webgpu-status-row">
-            <span class="webgpu-status-label">Progress</span>
-            <div class="webgpu-progress"><div class="webgpu-progress-bar" id="wgpuProgressBar" style="width:0%"></div></div>
-            <span class="webgpu-status-value" id="wgpuProgressText" style="min-width:60px;text-align:right;">—</span>
-          </div>
-        </div>
-
-        <div class="webgpu-messages" id="wgpuMessages">
-          <div class="empty">
-            <h2 class="empty-title">Runs 100% in your browser</h2>
-            <p class="empty-text">
-              We ship two pre-vetted ONNX models that <em>actually load</em> in transformers.js v3:<br/>
-              · <code>Llama-3.2-1B-Instruct-q4f16</code> — general / uncensored-ish<br/>
-              · <code>Qwen2.5-Coder-0.5B-Instruct</code> — code &amp; agentic<br/>
-              No keys, no network calls during inference, no credit usage. Click <strong>Load</strong> to download weights (cached after first run).<br/>
-              <small style="color:var(--ink-faint)">Requires Chrome 113+, Edge, or Firefox Nightly. WASM works on any browser, just slower.</small>
-            </p>
-          </div>
-        </div>
-
-        <div class="webgpu-composer">
-          <textarea id="wgpuInput" rows="2" placeholder="Load a model first, then type here…" disabled></textarea>
-          <button class="btn btn-primary" id="wgpuSendBtn" disabled><i class="fa-solid fa-paper-plane"></i> Send</button>
-          <button class="btn btn-danger" id="wgpuStopBtn" disabled><i class="fa-solid fa-stop"></i> Stop</button>
-        </div>
-      </div>
-    </section>
-
     <!-- ============ TRANSLATE ============ -->
     <section class="view" id="view-translate" aria-label="Translate">
       <header class="view-header">
@@ -722,7 +653,7 @@
             <div><kbd>Ctrl</kbd>+<kbd>N</kbd> <span>New chat</span></div>
             <div><kbd>Ctrl</kbd>+<kbd>K</kbd> <span>Focus input</span></div>
             <div><kbd>Ctrl</kbd>+<kbd>,</kbd> <span>Settings</span></div>
-            <div><kbd>Ctrl</kbd>+<kbd>1..6</kbd> <span>Jump to view</span></div>
+            <div><kbd>Ctrl</kbd>+<kbd>1..5</kbd> <span>Jump to view</span></div>
             <div><kbd>Enter</kbd> <span>Send</span></div>
             <div><kbd>Shift</kbd>+<kbd>Enter</kbd> <span>New line</span></div>
             <div><kbd>Esc</kbd> <span>Close modal</span></div>

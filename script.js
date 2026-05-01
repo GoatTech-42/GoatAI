@@ -248,19 +248,7 @@ const state = {
   termHistory: [],
   termHistoryIndex: -1,
   chatAutoScroll: true,
-  wgpu: {
-    available: null,
-    pipe: null,
-    loading: false,
-    model: null,
-    device: 'webgpu',
-    messages: [],
-    generating: false,
-    stopFlag: false,
-  },
 };
-
-const WEBGPU_TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.1';
 
 // ----- Errors -----
 const ERR_TITLES = {
@@ -419,7 +407,6 @@ async function init() {
   await safe('bindImage',        () => bindImage());
   await safe('bindAudio',        () => bindAudio());
   await safe('bindAgent',        () => bindAgent());
-  await safe('bindWebGPU',       () => bindWebGPU());
   await safe('bindTranslate',    () => bindTranslate());
   await safe('bindFiles',        () => bindFiles());
   await safe('bindTerminal',     () => bindTerminal());
@@ -517,7 +504,6 @@ function switchView(view) {
   $$(`[data-view="${view}"]`).forEach(b => b.classList.add('active'));
   if (view === 'gallery') refreshGallery();
   if (view === 'files')   refreshFileTree();
-  if (view === 'webgpu')  ensureWebGPUInit();
   if (view === 'prompts') renderPromptsView();
 }
 
@@ -532,8 +518,7 @@ function bindShortcuts() {
     if (e.key === '2') { e.preventDefault(); switchView('image'); }
     if (e.key === '3') { e.preventDefault(); switchView('audio'); }
     if (e.key === '4') { e.preventDefault(); switchView('agent'); }
-    if (e.key === '5') { e.preventDefault(); switchView('webgpu'); }
-    if (e.key === '6') { e.preventDefault(); switchView('translate'); }
+    if (e.key === '5') { e.preventDefault(); switchView('translate'); }
   });
 }
 
@@ -569,7 +554,6 @@ const FALLBACK_PROVIDERS = {
   stability:      { name: 'Stability AI',    short: 'sai', color: '#ec4899', capabilities: ['image'],               description: 'Stable Diffusion.', key_hint: 'sk-…' },
   elevenlabs:     { name: 'ElevenLabs',      short: 'el',  color: '#000000', capabilities: ['tts','stt'],           description: 'Voice synthesis.', key_hint: 'sk_…' },
   deepl:          { name: 'DeepL',           short: 'dl',  color: '#0f2b46', capabilities: [],                       description: 'Translation.', key_hint: 'key' },
-  webgpu:         { name: 'Local WebGPU',    short: 'wg',  color: '#7c3aed', capabilities: ['chat'],                local: true,     description: 'Runs in your browser.' },
 };
 
 function _toMetaWithActive(providers, cfg) {
@@ -691,9 +675,6 @@ function fillProviderSelect(selectId, capability, def) {
   const ids = Object.keys(state.providers || {}).filter((pid) => {
     const meta = state.providers[pid];
     if (!meta) return false;
-    // Allow webgpu only for agent (chat uses separate view)
-    if (pid === 'webgpu' && capability !== 'chat') return false;
-    if (pid === 'webgpu' && selectId !== 'agentProvider') return false;
     return (meta.capabilities || []).includes(capability);
   });
   // Sort: free first, then free-tier, then paid
@@ -1836,200 +1817,6 @@ function handleAgentEvent(ev) {
   else if (ev.event === 'cancelled') {
     addAgentEvent('error', `<i class="fa-solid fa-ban"></i> Cancelled`, '');
   }
-}
-
-// ============================================================
-//  WEBGPU (transformers.js, in browser)
-// ============================================================
-async function bindWebGPU() {
-  $('wgpuLoadBtn').addEventListener('click', loadWebGPUModel);
-  $('wgpuUnloadBtn').addEventListener('click', unloadWebGPUModel);
-  $('wgpuSendBtn').addEventListener('click', wgpuSend);
-  $('wgpuStopBtn').addEventListener('click', () => { state.wgpu.stopFlag = true; });
-  $('wgpuInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); wgpuSend(); }
-  });
-  // Image generation (if available)
-  if ($('wgpuImageGenBtn')) {
-    $('wgpuImageGenBtn').addEventListener('click', wgpuGenerateImage);
-  }
-}
-
-async function ensureWebGPUInit() {
-  if (state.wgpu.available !== null) return;
-  const has = !!navigator.gpu;
-  state.wgpu.available = has;
-  $('wgpuStatusText').textContent = has
-    ? 'WebGPU available — ready to load a model'
-    : 'WebGPU not detected — fallback to WASM (CPU, slower)';
-  if (!has) $('wgpuDevice').value = 'wasm';
-}
-
-async function loadWebGPUModel() {
-  if (state.wgpu.loading) return;
-  const modelId = $('wgpuModel').value;
-  const device  = $('wgpuDevice').value;
-  state.wgpu.loading = true;
-  $('wgpuLoadBtn').disabled = true;
-  $('wgpuStatusText').textContent = 'Importing transformers.js…';
-  $('wgpuStatusModel').textContent = modelId;
-  $('wgpuProgressBar').style.width = '0%';
-  $('wgpuProgressText').textContent = '0%';
-  try {
-    const tx = await import(/* @vite-ignore */ WEBGPU_TRANSFORMERS_URL);
-    const { pipeline, env } = tx;
-    env.allowLocalModels = false;
-    env.useBrowserCache = true;
-    $('wgpuStatusText').textContent = 'Downloading weights (cached after first run)…';
-
-    const pipe = await pipeline('text-generation', modelId, {
-      device,
-      dtype: 'q4f16',
-      progress_callback: (p) => {
-        if (p.status === 'progress' && p.total) {
-          const pct = Math.round((p.loaded / p.total) * 100);
-          $('wgpuProgressBar').style.width = pct + '%';
-          $('wgpuProgressText').textContent = pct + '%';
-          $('wgpuStatusText').textContent = `Downloading ${p.file || ''} (${(p.loaded/1e6).toFixed(1)} / ${(p.total/1e6).toFixed(1)} MB)`;
-        }
-        if (p.status === 'done')  $('wgpuStatusText').textContent = `Loaded · ${p.file || ''}`;
-        if (p.status === 'ready') $('wgpuStatusText').textContent = 'Ready';
-      },
-    });
-    state.wgpu.pipe = pipe;
-    state.wgpu.model = modelId;
-    state.wgpu.device = device;
-    $('wgpuStatusText').textContent = `Ready · ${modelId} on ${device.toUpperCase()}`;
-    $('wgpuProgressBar').style.width = '100%';
-    $('wgpuProgressText').textContent = '100%';
-    $('wgpuInput').disabled = false;
-    $('wgpuSendBtn').disabled = false;
-    $('wgpuUnloadBtn').disabled = false;
-    $('wgpuLoadBtn').disabled = false;
-    $('wgpuInput').placeholder = 'Type your message…';
-    $('wgpuMessages').innerHTML = '';
-    state.wgpu.messages = [];
-    toast('Model loaded', 'success');
-  } catch (e) {
-    console.error(e);
-    $('wgpuStatusText').textContent = `Load failed: ${e.message || e}`;
-    toast(`WebGPU load failed: ${e.message || e}`, 'error');
-    $('wgpuLoadBtn').disabled = false;
-  } finally {
-    state.wgpu.loading = false;
-  }
-}
-
-function unloadWebGPUModel() {
-  state.wgpu.pipe = null;
-  state.wgpu.model = null;
-  $('wgpuStatusText').textContent = 'Unloaded';
-  $('wgpuStatusModel').textContent = 'none';
-  $('wgpuProgressBar').style.width = '0%';
-  $('wgpuProgressText').textContent = '—';
-  $('wgpuInput').disabled = true; $('wgpuInput').placeholder = 'Load a model first…';
-  $('wgpuSendBtn').disabled = true; $('wgpuUnloadBtn').disabled = true;
-  $('wgpuMessages').innerHTML = '';
-  state.wgpu.messages = [];
-}
-
-async function wgpuSend() {
-  if (!state.wgpu.pipe || state.wgpu.generating) return;
-  const text = $('wgpuInput').value.trim();
-  if (!text) return;
-  state.wgpu.messages.push({ role: 'user', content: text });
-  $('wgpuInput').value = '';
-  renderWebGPUMessages();
-  state.wgpu.generating = true;
-  state.wgpu.stopFlag = false;
-  $('wgpuStopBtn').disabled = false;
-  $('wgpuSendBtn').disabled = true;
-
-  // Append empty assistant
-  state.wgpu.messages.push({ role: 'assistant', content: '' });
-  renderWebGPUMessages();
-  const lastEl = $('wgpuMessages').lastElementChild;
-
-  try {
-    const messages = state.wgpu.messages.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
-    // Simple streaming via TextStreamer if available
-    const tx = await import(/* @vite-ignore */ WEBGPU_TRANSFORMERS_URL);
-    const streamer = new tx.TextStreamer(state.wgpu.pipe.tokenizer, {
-      skip_prompt: true,
-      callback_function: (text) => {
-        const last = state.wgpu.messages[state.wgpu.messages.length - 1];
-        last.content += text;
-        if (lastEl) lastEl.querySelector('.webgpu-msg-body').innerHTML = safeMarkdown(last.content);
-        $('wgpuMessages').scrollTop = $('wgpuMessages').scrollHeight;
-        if (state.wgpu.stopFlag) throw new Error('STOPPED');
-      },
-    });
-    await state.wgpu.pipe(messages, {
-      max_new_tokens: 768,
-      do_sample: true,
-      temperature: 0.7,
-      top_p: 0.9,
-      streamer,
-    });
-  } catch (e) {
-    if (e.message !== 'STOPPED') {
-      const last = state.wgpu.messages[state.wgpu.messages.length - 1];
-      last.content = `Error: ${e.message || e}`;
-      renderWebGPUMessages();
-    }
-  } finally {
-    state.wgpu.generating = false;
-    $('wgpuStopBtn').disabled = true;
-    $('wgpuSendBtn').disabled = false;
-  }
-}
-
-async function wgpuGenerateImage() {
-  if (!state.wgpu.pipe) return toast('Load a model first', 'error');
-  if (state.wgpu.generating) return;
-  
-  const prompt = $('wgpuImagePrompt')?.value.trim();
-  if (!prompt) return toast('Prompt required', 'error');
-  
-  const btn = $('wgpuImageGenBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating…';
-  
-  try {
-    const tx = await import(/* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.1');
-    const { pipeline, env } = tx;
-    env.allowLocalModels = false;
-    env.useBrowserCache = true;
-    
-    $('wgpuImageStatus').textContent = 'Loading diffusion model…';
-    const pipe = await pipeline('text-to-image', 'runwayml/stable-diffusion-v1-5', { device: state.wgpu.device });
-    
-    $('wgpuImageStatus').textContent = 'Generating image…';
-    const result = await pipe(prompt, { guidance_scale: 7.5, num_inference_steps: 50 });
-    
-    const canvas = result.images[0];
-    const imageUrl = canvas.toDataURL ? canvas.toDataURL('image/png') : canvas;
-    
-    let imgHtml = `<div class="audio-result"><img src="${imageUrl}" alt="Generated" style="max-width: 100%; border-radius: 4px;"></div>`;
-    $('wgpuImageResult').innerHTML = imgHtml;
-    $('wgpuImageStatus').textContent = 'Generated via local Stable Diffusion';
-  } catch (e) {
-    toast(`Image gen error: ${e.message}`, 'error');
-    $('wgpuImageStatus').textContent = `Error: ${e.message}`;
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Generate';
-  }
-}
-
-function renderWebGPUMessages() {
-  const root = $('wgpuMessages');
-  root.innerHTML = state.wgpu.messages.map(m => `
-    <div class="webgpu-message ${m.role}">
-      <div class="webgpu-message-role">${m.role}</div>
-      <div class="webgpu-msg-body">${m.role === 'user' ? escapeHtml(m.content) : safeMarkdown(m.content)}</div>
-    </div>`).join('');
-  root.scrollTop = root.scrollHeight;
 }
 
 // ============================================================
