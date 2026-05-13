@@ -4,13 +4,13 @@
     "api/index.py": {
       "runtime": "@vercel/python@4.3.1",
       "maxDuration": 60,
-      "memory": 1024
+      "memory": 1024,
+      "includeFiles": "{app.py,index.html,script.js,style.css}"
     }
   },
-  "routes": [
-    { "handle": "filesystem" },
-    { "src": "/api/(.*)", "dest": "/api/index" },
-    { "src": "/(.*)", "dest": "/index.html" }
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/((?!.*\\.).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
@@ -20,7 +20,7 @@
       ]
     },
     {
-      "source": "/.+\\.(?:js|css|svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|map|json|txt)",
+      "source": "/(.*\\.(?:js|css|svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|map|json|txt))",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600" }
       ]

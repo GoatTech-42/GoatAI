@@ -1489,17 +1489,78 @@ def add_cors_headers(resp):
     return resp
 
 
+# ---------------------------------------------------------------------------
+# Global error handler — ensure NO request ever escapes the WSGI app as an
+# unhandled exception (which on Vercel becomes FUNCTION_INVOCATION_FAILED /
+# 500 INTERNAL_SERVER_ERROR).  Everything is converted to a clean JSON 500.
+# ---------------------------------------------------------------------------
+@app.errorhandler(Exception)
+def _handle_unexpected(err):
+    # Werkzeug HTTPException subclasses (404, 405, etc.) keep their own
+    # response so the app still behaves like a normal Flask app.
+    from werkzeug.exceptions import HTTPException
+    if isinstance(err, HTTPException):
+        return err
+    traceback.print_exc()
+    return jsonify({
+        "error": {
+            "type": "internal",
+            "status": 500,
+            "message": f"{type(err).__name__}: {err}",
+        }
+    }), 500
+
+
+# ---------------------------------------------------------------------------
+# Static file serving — bulletproof for Vercel.
+#
+# On Vercel's @vercel/python runtime, only files that the Python entrypoint
+# references at import time (or are declared via `includeFiles` in the
+# function config) get bundled into the Lambda's filesystem.  In our setup
+# `index.html`, `script.js`, `style.css` live at the repo root and are
+# normally served as static files by Vercel itself (the `filesystem` handler
+# / `cleanUrls` precedence).  These Flask routes only run as a fallback —
+# e.g. when running locally, on Render, or during a misrouted Vercel request.
+#
+# We therefore must never raise inside them: a missing file should return a
+# clean 404 (or a tiny inline HTML for `/`) rather than crash the function.
+# ---------------------------------------------------------------------------
+def _safe_send(filename: str):
+    """Send a file from BASE_DIR, returning a clean 404 if it's not bundled."""
+    target = BASE_DIR / filename
+    try:
+        if target.exists() and target.is_file():
+            return send_from_directory(BASE_DIR, filename)
+    except Exception:
+        traceback.print_exc()
+    return Response(
+        f"<!doctype html><meta charset=utf-8><title>{APP_NAME}</title>"
+        f"<h1>{APP_NAME} API is running</h1>"
+        f"<p>Static asset <code>{html_lib.escape(filename)}</code> "
+        f"was not bundled with the serverless function. "
+        f"It should be served directly by the platform's static handler.</p>",
+        status=404, mimetype="text/html",
+    )
+
+
 @app.route("/", methods=["GET"])
 def index():
-    return send_from_directory(BASE_DIR, "index.html")
+    return _safe_send("index.html")
 
 
 @app.route("/<path:path>", methods=["GET"])
 def static_files(path):
-    target = BASE_DIR / path
+    # Refuse to traverse outside BASE_DIR.
+    try:
+        target = (BASE_DIR / path).resolve()
+        if BASE_DIR not in target.parents and target != BASE_DIR:
+            return _safe_send("index.html")
+    except Exception:
+        return _safe_send("index.html")
     if target.exists() and target.is_file():
-        return send_from_directory(BASE_DIR, path)
-    return send_from_directory(BASE_DIR, "index.html")
+        return _safe_send(path)
+    # SPA fallback — unknown route -> index.html
+    return _safe_send("index.html")
 
 
 # ---------------------------------------------------------------------------
