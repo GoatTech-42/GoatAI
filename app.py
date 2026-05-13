@@ -563,8 +563,30 @@ MODEL_PROMPT_MAP = {
 # ---------------------------------------------------------------------------
 # Flask app
 # ---------------------------------------------------------------------------
-app = Flask(__name__, static_folder=str(BASE_DIR), static_url_path="")
+# static_folder=None — we serve static files ourselves via the SPA fallback
+# route, so the Flask built-in `/<path:filename>` static endpoint doesn't
+# pre-empt our handler and return 404 for missing files (which should be
+# rewritten to index.html for SPA routing).
+app = Flask(__name__, static_folder=None)
+
+# Detect serverless (Vercel) environment.  On Vercel each request gets a fresh
+# container, so an in-process cancel dict isn't useful — but it's still safe.
+import os as _os
+IS_SERVERLESS = bool(_os.environ.get("VERCEL") or _os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+
 _cancel_events: dict[str, Event] = {}
+_cancel_events_lock = Lock()
+
+
+def _sse_response(generator):
+    """Wrap an SSE generator with anti-buffering headers required by Vercel /
+    nginx / Cloudflare to ensure tokens stream in real time."""
+    resp = Response(generator, mimetype="text/event-stream")
+    resp.headers["Cache-Control"] = "no-cache, no-transform"
+    resp.headers["X-Accel-Buffering"] = "no"      # disable nginx/Vercel buffering
+    resp.headers["Connection"] = "keep-alive"
+    resp.headers["Content-Encoding"] = "identity" # don't gzip the stream
+    return resp
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1630,8 +1652,7 @@ def api_chat():
         or_cfg = _req_provider_cfg(p, "openrouter") if provider == "openrouter" else None
         headers = _headers_for_provider(provider, key, or_cfg)
         if stream:
-            return Response(_openai_compat_stream(url, headers, body, provider, model),
-                            mimetype="text/event-stream")
+            return _sse_response(_openai_compat_stream(url, headers, body, provider, model))
         text, err = _openai_compat_once(url, headers, {**body, "stream": False})
         if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
         return jsonify({"text": text or ""})
@@ -1639,8 +1660,7 @@ def api_chat():
     if provider == "anthropic":
         key = _req_key(p, provider)
         if stream:
-            return Response(_anthropic_chat_stream(key, model, messages, sys_prompt, temp),
-                            mimetype="text/event-stream")
+            return _sse_response(_anthropic_chat_stream(key, model, messages, sys_prompt, temp))
         parts = []
         for chunk in _anthropic_chat_stream(key, model, messages, sys_prompt, temp):
             if chunk.startswith("data: ") and chunk[6:].strip() not in ("[DONE]", ""):
@@ -1654,15 +1674,14 @@ def api_chat():
         key = _req_key(p, provider)
         text, err = _google_chat_once(key, model, messages, sys_prompt, temp)
         if stream:
-            return Response(_pseudo_stream(text, err), mimetype="text/event-stream")
+            return _sse_response(_pseudo_stream(text, err))
         if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
         return jsonify({"text": text or ""})
 
     if provider == "cohere":
         key = _req_key(p, provider)
         if stream:
-            return Response(_cohere_chat_stream(key, model, messages, sys_prompt, temp),
-                            mimetype="text/event-stream")
+            return _sse_response(_cohere_chat_stream(key, model, messages, sys_prompt, temp))
         parts = []
         for chunk in _cohere_chat_stream(key, model, messages, sys_prompt, temp):
             if chunk.startswith("data: ") and chunk[6:].strip() not in ("[DONE]", ""):
@@ -1677,7 +1696,7 @@ def api_chat():
         account_id = _req_provider_cfg(p, "cloudflare").get("account_id", "")
         text, err = _cloudflare_chat_once(key, account_id, model, messages, sys_prompt, temp)
         if stream:
-            return Response(_pseudo_stream(text, err), mimetype="text/event-stream")
+            return _sse_response(_pseudo_stream(text, err))
         if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
         return jsonify({"text": text or ""})
 
@@ -1696,21 +1715,19 @@ def api_chat():
             r = requests.post(f"https://router.huggingface.co/hf-inference/models/{model}",
                               headers={"Authorization": f"Bearer {key}"}, json=body, timeout=180)
             if not r.ok:
-                if stream: return Response(_pseudo_stream(None, (r.status_code, _extract_error_message(r.text))),
-                                           mimetype="text/event-stream")
+                if stream: return _sse_response(_pseudo_stream(None, (r.status_code, _extract_error_message(r.text))))
                 return _error_response(r.status_code, _extract_error_message(r.text))
             data = r.json()
             text = data[0].get("generated_text", "") if isinstance(data, list) else data.get("generated_text", "")
-            if stream: return Response(_pseudo_stream(text, (0, None)), mimetype="text/event-stream")
+            if stream: return _sse_response(_pseudo_stream(text, (0, None)))
             return jsonify({"text": text})
         except Exception as e:
-            if stream: return Response(_pseudo_stream(None, (502, str(e))), mimetype="text/event-stream")
+            if stream: return _sse_response(_pseudo_stream(None, (502, str(e))))
             return _error_response(502, str(e))
 
     if provider == "duckduckgo":
         if stream:
-            return Response(_ddg_chat_stream(model, messages, sys_prompt or ""),
-                            mimetype="text/event-stream")
+            return _sse_response(_ddg_chat_stream(model, messages, sys_prompt or ""))
         text, err = _ddg_chat_once(model, messages, sys_prompt or "")
         if err[0]: return _error_response(err[0], err[1] or "Error", provider=provider, model=model)
         return jsonify({"text": text or ""})
@@ -2029,9 +2046,11 @@ def api_eleven_voices():
 @app.route("/api/agent/cancel/<run_id>", methods=["POST", "OPTIONS"])
 def api_agent_cancel(run_id):
     if request.method == "OPTIONS": return "", 204
-    ev = _cancel_events.get(run_id)
+    with _cancel_events_lock:
+        ev = _cancel_events.get(run_id)
     if ev: ev.set()
-    return jsonify({"ok": True})
+    # On serverless, cancel is best-effort (different container = no shared state)
+    return jsonify({"ok": True, "serverless": IS_SERVERLESS})
 
 
 @app.route("/api/agent/run", methods=["POST", "OPTIONS"])
@@ -2050,7 +2069,12 @@ def api_agent_run():
     if not task: return _error_response(400, "Task required")
 
     cancel_event = Event()
-    _cancel_events[run_id] = cancel_event
+    with _cancel_events_lock:
+        _cancel_events[run_id] = cancel_event
+        # Cap dict size to avoid leak on long-running servers
+        if len(_cancel_events) > 256:
+            for old_id in list(_cancel_events.keys())[:128]:
+                _cancel_events.pop(old_id, None)
     executor = AgentExecutor(cancel_event)
 
     def emit(o): return f"data: {json.dumps(o)}\n\n"
@@ -2191,9 +2215,10 @@ def api_agent_run():
             yield emit({"event": "error", "error": {"type": "internal", "message": str(exc)}})
             yield "data: [DONE]\n\n"
         finally:
-            _cancel_events.pop(run_id, None)
+            with _cancel_events_lock:
+                _cancel_events.pop(run_id, None)
 
-    return Response(gen(), mimetype="text/event-stream")
+    return _sse_response(gen())
 
 
 # ---------------------------------------------------------------------------

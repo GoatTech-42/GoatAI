@@ -7,15 +7,10 @@
       "memory": 1024
     }
   },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" }
-  ],
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
-      ]
-    }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/index", "headers": { "Cache-Control": "no-store, no-cache, must-revalidate" } },
+    { "src": "/(index\\.html)?", "dest": "/index.html" },
+    { "src": "/(.+\\.(?:js|css|svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|map|json|txt))", "dest": "/$1", "headers": { "Cache-Control": "public, max-age=3600" } },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
