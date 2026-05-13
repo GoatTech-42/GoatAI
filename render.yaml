@@ -3,6 +3,8 @@ services:
     name: goatai
     runtime: python
     plan: free
+    # gunicorn is intentionally NOT in requirements.txt (Vercel chokes on it).
+    # It's installed here only for the Render service.
     buildCommand: pip install -r requirements.txt gunicorn
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
     envVars:
