@@ -1,13 +1,21 @@
 [project]
 name = "goatai-api-chat"
 version = "1.0.0"
-description = "GoatAI API Chat Flask app for Vercel deployment"
+description = "GoatAI API Chat — multi-provider AI studio (Flask, deployable to Vercel / Render)."
+requires-python = ">=3.11"
+dependencies = [
+    "flask>=3.0.0",
+    "requests>=2.31.0",
+]
 
+# ---------------------------------------------------------------------------
+# Vercel Python runtime configuration.
+#
+# `tool.vercel.entrypoint` points Vercel at the WSGI app it should load.  The
+# `app:app` value means: import the module `app` (i.e. /app.py at the repo
+# root) and use its top-level `app` variable as the WSGI handler.  Vercel will
+# expose every Flask route automatically — no gunicorn needed.  (See
+# https://vercel.com/docs/functions/runtimes/python#python-entrypoints)
+# ---------------------------------------------------------------------------
 [tool.vercel]
-# Vercel Python entrypoint
 entrypoint = "app:app"
-
-[tool.poetry.dependencies]
-python = ">=3.8"
-flask = "*"
-requests = "*"

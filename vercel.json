@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/index.py": {
       "runtime": "@vercel/python@4.3.1",
@@ -7,10 +7,22 @@
       "memory": 1024
     }
   },
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/index", "headers": { "Cache-Control": "no-store, no-cache, must-revalidate" } },
-    { "src": "/(index\\.html)?", "dest": "/index.html" },
-    { "src": "/(.+\\.(?:js|css|svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|map|json|txt))", "dest": "/$1", "headers": { "Cache-Control": "public, max-age=3600" } },
-    { "src": "/(.*)", "dest": "/index.html" }
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/((?!.*\\.).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/(.+\\.(?:js|css|svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|map|json|txt))",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600" }
+      ]
+    }
   ]
 }
